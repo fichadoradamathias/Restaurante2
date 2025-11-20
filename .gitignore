@@ -3,6 +3,6 @@ gitignore
 venv/
 __pycache__/
 *.pyc
-
+.stramlit
 
 # data/*.sqlite
