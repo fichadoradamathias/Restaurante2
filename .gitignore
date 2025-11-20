@@ -1,0 +1,8 @@
+gitignore
+# Ignorar carpeta de entorno virtual
+venv/
+__pycache__/
+*.pyc
+
+
+# data/*.sqlite
