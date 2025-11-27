@@ -133,4 +133,27 @@ def user_dashboard(db_session_maker, user_id):
                 f"Acompañamiento {day_names[day_key]}", 
                 options=list(options_side.keys()),
                 index=default_index,
-                key=f"{
+                key=f"{day_key}_o",
+                label_visibility="collapsed"
+            )
+            order_values[field_key] = options_side[selection]
+
+
+        st.markdown("---")
+        
+        # CAMPO DE NOTAS ACTUALIZADO
+        initial_notes = existing_order.notes if existing_order else ""
+        notes = st.text_area("Notas / Sugerencias", value=initial_notes, help="(Agrega sugerencia o aviso si deseas)")
+        
+        st.write(" ") # Espacio
+
+        if st.form_submit_button("🚀 Enviar Pedido Semanal"):
+            success = submit_weekly_order(db, user_id, current_week.id, order_values, notes)
+            
+            if success:
+                st.success("✅ ¡Pedido semanal guardado exitosamente!")
+                st.balloons()
+            else:
+                st.error("❌ Error al guardar el pedido. Intenta de nuevo.")
+
+    db.close()
