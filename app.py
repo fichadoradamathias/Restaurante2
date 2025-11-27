@@ -1,117 +1,162 @@
 import streamlit as st
-from database.connection import SessionLocal, init_db
-from services.auth import authenticate_user 
-from views.user_panel import user_dashboard
-from views.admin_panel import admin_dashboard
-from views.user_management import user_management_dashboard 
-from views.audit_logs import audit_log_page # ⬅️ Importación necesaria
-import os
-from database.connection import init_db
+from sqlalchemy.orm import Session
+from database.models import Week, MenuItem, Order
+from datetime import date
 
-# --- AUTO-SETUP PARA LA NUBE ---
-# Si no existe la carpeta data, la creamos
-if not os.path.exists('data'):
-    os.makedirs('data')
+def get_menu_options_by_type(db: Session, week_id: int, day: str, meal_type: str):
+    """Obtiene las opciones de menú para un día y tipo de plato específicos."""
+    items = db.query(MenuItem).filter(
+        MenuItem.week_id == week_id,
+        MenuItem.day == day,
+        MenuItem.type == meal_type # Usamos .type (corregido)
+    ).order_by(MenuItem.option_number).all()
+    
+    options = {"NO PEDIDO": None}
+    for item in items:
+        options[f"Opción {item.option_number}: {item.description}"] = item.option_number
+    return options
 
-# Si no existe la DB, la inicializamos
-if not os.path.exists('data/db.sqlite'):
-    init_db()
-    # Opcional: Aquí podrías llamar a tu seed si quisieras
-# -------------------------------
+def get_user_order(db: Session, user_id: int, week_id: int):
+    """Recupera el pedido del usuario."""
+    return db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id).first()
 
-# Configuración inicial
-st.set_page_config(page_title="Basdonax Food", layout="wide")
+def submit_weekly_order(db: Session, user_id: int, week_id: int, order_data: dict, notes: str):
+    """Guarda o actualiza el pedido semanal con las 15 opciones."""
+    order = get_user_order(db, user_id, week_id)
+    
+    if order is None:
+        order = Order(user_id=user_id, week_id=week_id)
+        db.add(order)
 
-init_db()
+    # Actualizar los 15 campos
+    for key, value in order_data.items():
+        setattr(order, key, value)
+    
+    # Actualizar notas
+    order.notes = notes
+    
+    db.commit()
+    return True
 
-# Aseguramos que todas las claves de sesión necesarias existan
-if "token" not in st.session_state:
-    st.session_state.token = None
-    st.session_state.user = None
-    st.session_state.user_id = None # Aseguramos que el ID exista
-    st.session_state.role = None
-    st.session_state.nav_index = 0
-
-def main():
-    # --- LOGIN ---
-    if not st.session_state.token:
-        st.title("🔒 Techline – Menú Semanal")
-        col1, col2 = st.columns([1,2])
-        with col1:
-            username = st.text_input("Usuario")
-            password = st.text_input("Contraseña", type="password")
-            if st.button("Entrar"):
-                db = SessionLocal()
-                user = authenticate_user(db, username, password) 
-                db.close()
-                
-                if user:
-                    st.session_state.token = True
-                    st.session_state.user = user.username
-                    st.session_state.user_id = user.id
-                    st.session_state.role = user.role
-                    st.session_state.name = user.full_name # Usaremos el nombre completo en la sidebar
-                    st.rerun()
-                else:
-                    st.error("Credenciales inválidas")
+def user_dashboard(db_session_maker, user_id):
+    st.title(f"🍽️ Pedido Semanal")
+    
+    db = db_session_maker()
+    
+    # 1. ENCONTRAR SEMANA ABIERTA
+    current_week = db.query(Week).filter(Week.is_open == True).first()
+    
+    if not current_week:
+        st.info("Actualmente no hay una semana de pedidos abierta.")
+        db.close()
         return
 
-    # --- SIDEBAR (USUARIO LOGUEADO) ---
+    st.subheader(f"Semana Activa: {current_week.title}")
     
-    # Usamos st.session_state.user para el nombre de usuario
-    st.sidebar.title(f"Hola, {st.session_state.user} 👋") 
+    # 2. RECUPERAR DATOS EXISTENTES
+    existing_order = get_user_order(db, user_id, current_week.id)
     
-    # ----------------------------------------------------
-    # --- LÓGICA DE NAVEGACIÓN ACTUALIZADA ---
-    # ----------------------------------------------------
+    # Lista de días y tipos de plato
+    days = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    meal_types = ["principal", "salad", "side"]
+    day_names = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
     
-    # 1. Definir opciones base
-    navigation_options = ["🏠 Menú Semanal"] # Opción base para todos (User Panel)
+    order_values = {}
     
-    # 2. Agregar opciones de Admin
-    if st.session_state.role == "admin":
-        navigation_options.append("📋 Panel de Gestión")
-        navigation_options.append("👥 Gestión Usuarios")
-        navigation_options.append("📊 Admin Logs") # ⬅️ AÑADIMOS LA NUEVA PÁGINA
+    with st.form("weekly_order_form"):
+        st.markdown("---")
         
-    # 3. Opción de cierre al final
-    navigation_options.append("🚪 Cerrar Sesión") 
-    
-    # 4. Mostrar radio button y mantener el índice
-    selection = st.sidebar.radio("Navegación", navigation_options, index=st.session_state.get('nav_index', 0))
-    st.session_state['nav_index'] = navigation_options.index(selection)
+        # UI DE TÍTULOS DE COLUMNAS
+        c_title_1, c_title_2, c_title_3, c_title_4, c_title_5 = st.columns(5)
+        c_title_1.subheader("Lunes")
+        c_title_2.subheader("Martes")
+        c_title_3.subheader("Miércoles")
+        c_title_4.subheader("Jueves")
+        c_title_5.subheader("Viernes")
 
-    st.sidebar.markdown("---")
-    
-    # ----------------------------------------------------
-    # --- ROUTING BASADO EN LA SELECCIÓN ---
-    # ----------------------------------------------------
-    
-    if selection == "🚪 Cerrar Sesión":
-        st.session_state.clear()
-        st.rerun()
+        # --- FILA 1: PLATO PRINCIPAL ---
+        st.markdown("### Plato Principal") # NUEVO TÍTULO
+        cols_principal = st.columns(5)
         
-    elif selection == "🏠 Menú Semanal":
-        # Todos (Admin y User) ven la vista del usuario por defecto
-        user_dashboard(SessionLocal, st.session_state.user_id)
-
-    # Vistas exclusivas de Admin
-    elif st.session_state.role == "admin":
+        # --- FILA 2: ENSALADA ---
+        st.markdown("### Ensalada") # NUEVO TÍTULO
+        cols_salad = st.columns(5)
         
-        if selection == "📋 Panel de Gestión":
-            admin_dashboard(SessionLocal)
+        # --- FILA 3: ACOMPAÑAMIENTO ---
+        st.markdown("### Acompañamiento") # NUEVO TÍTULO
+        cols_side = st.columns(5)
+
+        # 3. GENERAR SELECTORES DINÁMICOS
+        for i, day_key in enumerate(days):
             
-        elif selection == "👥 Gestión Usuarios":
-            user_management_dashboard(SessionLocal)
+            # 1. PLATO PRINCIPAL
+            options_principal = get_menu_options_by_type(db, current_week.id, day_names[day_key], 'principal')
+            field_key = f"{day_key}_principal"
             
-        elif selection == "📊 Admin Logs":
-            # ⬅️ VISTA DE LOGS DE AUDITORÍA
-            audit_log_page(SessionLocal, st.session_state.user) 
+            current_val = getattr(existing_order, field_key) if existing_order else None
+            # Encontrar la clave correspondiente al valor actual
+            default_key = next((k for k, v in options_principal.items() if v == current_val), "NO PEDIDO")
+            default_index = list(options_principal.keys()).index(default_key)
             
-    # Si por alguna razón no es admin y no seleccionó el menú, mostramos el panel de usuario
-    else:
-        user_dashboard(SessionLocal, st.session_state.user_id)
+            selection = cols_principal[i].selectbox(
+                f"Plato Principal {day_names[day_key]}", 
+                options=list(options_principal.keys()),
+                index=default_index,
+                key=f"{day_key}_p",
+                label_visibility="collapsed"
+            )
+            order_values[field_key] = options_principal[selection]
+
+            # 2. ENSALADA
+            options_salad = get_menu_options_by_type(db, current_week.id, day_names[day_key], 'salad')
+            field_key = f"{day_key}_salad"
+            
+            current_val = getattr(existing_order, field_key) if existing_order else None
+            default_key = next((k for k, v in options_salad.items() if v == current_val), "NO PEDIDO")
+            default_index = list(options_salad.keys()).index(default_key)
+            
+            selection = cols_salad[i].selectbox(
+                f"Ensalada {day_names[day_key]}", 
+                options=list(options_salad.keys()),
+                index=default_index,
+                key=f"{day_key}_s",
+                label_visibility="collapsed"
+            )
+            order_values[field_key] = options_salad[selection]
+            
+            # 3. ACOMPAÑAMIENTO
+            options_side = get_menu_options_by_type(db, current_week.id, day_names[day_key], 'side')
+            field_key = f"{day_key}_side"
+            
+            current_val = getattr(existing_order, field_key) if existing_order else None
+            default_key = next((k for k, v in options_side.items() if v == current_val), "NO PEDIDO")
+            default_index = list(options_side.keys()).index(default_key)
+            
+            selection = cols_side[i].selectbox(
+                f"Acompañamiento {day_names[day_key]}", 
+                options=list(options_side.keys()),
+                index=default_index,
+                key=f"{day_key}_o",
+                label_visibility="collapsed"
+            )
+            order_values[field_key] = options_side[selection]
 
 
-if __name__ == "__main__":
-    main()
+        st.markdown("---")
+        
+        # CAMPO DE NOTAS ACTUALIZADO
+        initial_notes = existing_order.notes if existing_order else ""
+        notes = st.text_area("Notas / Sugerencias", value=initial_notes, help="(Agrega sugerencia o aviso si deseas)")
+        
+        st.write(" ") # Espacio
+
+        if st.form_submit_button("🚀 Enviar Pedido Semanal"):
+            success = submit_weekly_order(db, user_id, current_week.id, order_values, notes)
+            
+            if success:
+                st.success("✅ ¡Pedido semanal guardado exitosamente!")
+                st.balloons()
+            else:
+                st.error("❌ Error al guardar el pedido. Intenta de nuevo.")
+
+    db.close()
