@@ -6,10 +6,10 @@ from services.admin_service import create_week, finalize_week_logic
 from services.logic import delete_week_data # <-- Nueva función de borrado
 from sqlalchemy.orm import Session
 import datetime
-import pandas as pd 
+import pandas as pd
 
 def admin_dashboard(db_session_maker):
-    st.title("📋 Gestión Semanal") 
+    st.title("📋 Gestión Semanal")
     
     # --- Pestañas de Navegación ---
     tab1, tab2, tab3 = st.tabs(["📅 Crear/Gestionar Semana", "🍔 Gestión Menú", "🔒 Cierre y Exportación"])
@@ -76,8 +76,8 @@ def admin_dashboard(db_session_maker):
             selected_week_id = week_opts[selected_week_title]
 
             meal_type_map = {
-                "Plato Principal": "principal", 
-                "Ensalada": "salad", 
+                "Plato Principal": "principal",
+                "Ensalada": "salad",
                 "Acompañamiento": "side"
             }
 
@@ -100,31 +100,31 @@ def admin_dashboard(db_session_maker):
                     existing_opt = db.query(MenuItem).filter(
                         MenuItem.week_id == selected_week_id,
                         MenuItem.day == day,
-                        MenuItem.meal_type == meal_type,
+                        MenuItem.type == meal_type,  # <-- CORRECCIÓN 1
                         MenuItem.option_number == opt_num
                     ).first()
 
                     if existing_opt:
                         st.error(f"❌ Error: La Opción #{opt_num} ya existe para {day} en '{type_label}'. Por favor, elija otro número de opción.")
-                        return 
+                        return
                     
                     # --- VALIDACIÓN 2: DESCRIPCIÓN ÚNICA POR DÍA/TIPO ---
                     existing_desc = db.query(MenuItem).filter(
                         MenuItem.week_id == selected_week_id,
                         MenuItem.day == day,
-                        MenuItem.meal_type == meal_type,
+                        MenuItem.type == meal_type,  # <-- CORRECCIÓN 2
                         MenuItem.description == desc
                     ).first()
 
                     if existing_desc:
                         st.error(f"❌ Error: El plato '{desc}' ya fue agregado como Opción #{existing_desc.option_number} para {day} en '{type_label}'. Evite duplicados.")
-                        return 
+                        return
 
                     # SI PASA LAS VALIDACIONES, SE GUARDA
                     new_item = MenuItem(
                         week_id=selected_week_id,
                         day=day,
-                        meal_type=meal_type, 
+                        type=meal_type,  # <-- CORRECCIÓN 3
                         option_number=opt_num,
                         description=desc
                     )
@@ -139,11 +139,11 @@ def admin_dashboard(db_session_maker):
             items = db.query(MenuItem).filter(MenuItem.week_id == selected_week_id).all()
             if items:
                 df = pd.DataFrame([
-                    {'Día': i.day, 'Tipo': next(k for k, v in meal_type_map.items() if v == i.meal_type), 'Opción #': i.option_number, 'Descripción': i.description}
+                    {'Día': i.day, 'Tipo': next(k for k, v in meal_type_map.items() if v == i.type), 'Opción #': i.option_number, 'Descripción': i.description} # <-- CORRECCIÓN 4
                     for i in items
                 ])
                 # Mapeo inverso para mostrar etiquetas amigables
-                df['Tipo'] = df['Tipo'].map({v: k for k, v in meal_type_map.items()}) 
+                df['Tipo'] = df['Tipo'].map({v: k for k, v in meal_type_map.items()})
                 st.dataframe(df.sort_values(by=['Día', 'Opción #']), use_container_width=True)
             else:
                 st.info("Aún no hay platos cargados para esta semana.")
