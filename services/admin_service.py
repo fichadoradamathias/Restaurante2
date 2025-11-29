@@ -2,8 +2,43 @@ import pandas as pd
 import json
 import os
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from database.models import Week, Order, User, MenuItem, ExportLog
+
+# --- FUNCIONES DE GESTIÓN DE MENÚ (Nuevas para la edición) ---
+
+def update_menu_item(db: Session, item_id: int, new_description: str, new_option_number: int):
+    """Actualiza la descripción y número de opción de un ítem del menú."""
+    item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+    if not item:
+        return False, "Ítem no encontrado."
+    
+    item.description = new_description
+    item.option_number = new_option_number
+    try:
+        db.commit()
+        return True, "Ítem actualizado correctamente."
+    except Exception as e:
+        db.rollback()
+        print(f"Error al actualizar ítem: {e}")
+        return False, "Error al guardar en la base de datos."
+
+def delete_menu_item(db: Session, item_id: int):
+    """Elimina un ítem del menú."""
+    item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+    if not item:
+        return False, "Ítem no encontrado."
+    
+    try:
+        db.delete(item)
+        db.commit()
+        return True, "Ítem eliminado correctamente."
+    except Exception as e:
+        db.rollback()
+        print(f"Error al eliminar ítem: {e}")
+        return False, "Error al eliminar de la base de datos."
+
+# --- FUNCIONES DE SEMANA ---
 
 def create_week(db: Session, title, start_date, end_date):
     # Validación: Fechas coherentes
@@ -34,7 +69,7 @@ def finalize_week_logic(db: Session, week_id: int):
     # 2. Crear registros de 'no_pedido' para auditoría histórica
     for user in active_users:
         if user.id not in users_with_order_ids:
-            # FIX 1: Cambiamos details_json por details, y eliminamos json.dumps
+            # CORRECCIÓN 1: Usar 'details' en lugar de 'details_json' y sin json.dumps
             ghost_order = Order(
                 user_id=user.id,
                 week_id=week_id,
@@ -51,30 +86,71 @@ def finalize_week_logic(db: Session, week_id: int):
 
 def export_week_to_excel(db: Session, week_id: int):
     week = db.query(Week).filter(Week.id == week_id).first()
-    orders = db.query(Order).filter(Order.week_id == week_id).all()
+    # Usamos joinedload para traer el usuario de inmediato
+    orders = db.query(Order).options(joinedload(Order.user)).filter(Order.week_id == week_id).all()
     
     data = []
-    # Los días aquí deberían coincidir con las claves guardadas en el pedido (ej: 'monday_principal') 
-    # Sin embargo, tu código original usa 'Lunes', 'Martes', etc. Usaremos los días que definiste.
-    days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] 
+    
+    # Días clave usados en el menú y el pedido (en minúsculas)
+    day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
+    # Nombres de columna en Excel
+    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+
+    # Tipos de plato y sus etiquetas para la exportación
+    meal_types = [("principal", "Comida"), ("side", "Acompañamiento"), ("salad", "Ensalada")]
+
+    # Crear un caché para no consultar la base de datos por cada ítem
+    menu_item_cache = {} # Key: item_id, Value: description
 
     for order in orders:
-        # FIX 2: Cambiamos order.details_json por order.details y eliminamos json.loads
+        # CORRECCIÓN 2: Usar order.details y no order.details_json ni json.loads
         details = order.details 
+        
         row = {
-            "Nombre Completo": order.user.full_name,
-            "Status": order.status,
-            "Fecha Pedido": order.created_at.strftime("%Y-%m-%d %H:%M") if order.status == 'success' else ""
+            "Usuario": order.user.full_name,
+            # Se eliminan Status y Fecha Pedido según tu solicitud de sólo 5 columnas
         }
-        for day in days:
-            # Extraer solo el nombre de la comida o "NO PEDIDO"
-            val = details.get(day, "NO PEDIDO")
-            if isinstance(val, dict): # Si guardamos objeto completo
-                val = f"{val.get('opcion', '')} {val.get('extra', '')}"
-            row[day] = val
+        
+        # Iterar por cada día y por cada tipo de plato
+        for day_index, day in enumerate(day_keys):
+            full_day_details = []
+            
+            # Nombre de la columna en el Excel: Lunes, Martes, etc.
+            col_name = day_names[day_index]
+            
+            for db_type, label in meal_types:
+                # La clave en el JSON es (ej: monday_principal)
+                field_key = f"{day}_{db_type}" 
+                
+                # option_id es el ID numérico del item seleccionado (o None si NO PEDIDO)
+                option_id = details.get(field_key) 
+                
+                item_description = "NO PEDIDO"
+
+                if option_id:
+                    # Si el item_id no está en caché, lo buscamos en la base de datos
+                    if option_id not in menu_item_cache:
+                        menu_item = db.query(MenuItem).filter(MenuItem.id == option_id).first()
+                        if menu_item:
+                            menu_item_cache[option_id] = menu_item.description
+                    
+                    item_description = menu_item_cache.get(option_id, "Opción Desconocida")
+
+                # Formato solicitado: "Comida: Pollo"
+                full_day_details.append(f"{label}: {item_description}")
+            
+            # Unir los 3 detalles en una sola celda, separados por salto de línea
+            row[col_name] = "\n".join(full_day_details)
+
         data.append(row)
 
     df = pd.DataFrame(data)
+    
+    # Definir el orden y las columnas finales solicitadas
+    final_cols = ["Usuario"] + day_names 
+    
+    # Creamos un nuevo DataFrame con el orden de columnas deseado
+    df_final = df[final_cols] 
     
     # Nombre archivo seguro
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
@@ -82,7 +158,7 @@ def export_week_to_excel(db: Session, week_id: int):
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)
-    df.to_excel(path, index=False)
+    df_final.to_excel(path, index=False) 
     
     # Log
     log = ExportLog(week_id=week_id, filename=path)
