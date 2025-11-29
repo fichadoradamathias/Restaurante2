@@ -34,12 +34,12 @@ def finalize_week_logic(db: Session, week_id: int):
     # 2. Crear registros de 'no_pedido' para auditoría histórica
     for user in active_users:
         if user.id not in users_with_order_ids:
-            # Llenamos con un JSON vacío o explícito
+            # FIX 1: Cambiamos details_json por details, y eliminamos json.dumps
             ghost_order = Order(
                 user_id=user.id,
                 week_id=week_id,
                 status="no_pedido",
-                details_json=json.dumps({day: "NO PEDIDO" for day in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]})
+                details={day: "NO PEDIDO" for day in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]}
             )
             db.add(ghost_order)
     
@@ -54,10 +54,13 @@ def export_week_to_excel(db: Session, week_id: int):
     orders = db.query(Order).filter(Order.week_id == week_id).all()
     
     data = []
-    days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+    # Los días aquí deberían coincidir con las claves guardadas en el pedido (ej: 'monday_principal') 
+    # Sin embargo, tu código original usa 'Lunes', 'Martes', etc. Usaremos los días que definiste.
+    days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] 
 
     for order in orders:
-        details = json.loads(order.details_json)
+        # FIX 2: Cambiamos order.details_json por order.details y eliminamos json.loads
+        details = order.details 
         row = {
             "Nombre Completo": order.user.full_name,
             "Status": order.status,
