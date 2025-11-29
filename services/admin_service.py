@@ -103,7 +103,7 @@ def export_week_to_excel(db: Session, week_id: int):
     for order in orders:
         details = order.details 
         
-        # ✅ CORRECCIÓN FINAL: SOLO incluimos "Usuario". NO incluimos Status ni Notas.
+        # SOLO incluimos "Usuario". NO incluimos Status ni Notas.
         row = {
             "Usuario": order.user.full_name,
         }
@@ -147,7 +147,7 @@ def export_week_to_excel(db: Session, week_id: int):
 
     df = pd.DataFrame(data)
     
-    # ✅ CORRECCIÓN FINAL: Definir el orden final de las columnas SIN Status ni Notas
+    # Definir el orden final de las columnas SIN Status ni Notas
     final_cols = ["Usuario"]
     
     # Construir dinámicamente el resto de las columnas para asegurar el orden
@@ -160,7 +160,7 @@ def export_week_to_excel(db: Session, week_id: int):
     
     # Nombre archivo seguro
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
-    filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx" # Nombre actualizado para indicar versión Cocina
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)
@@ -171,4 +171,5 @@ def export_week_to_excel(db: Session, week_id: int):
     db.add(log)
     db.commit()
     
+    # ¡FIN DE LA FUNCIÓN export_week_to_excel! Esto debe funcionar.
     return path, "Exportación exitosa"
