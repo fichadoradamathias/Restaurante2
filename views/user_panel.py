@@ -35,10 +35,8 @@ def submit_weekly_order(db: Session, user_id: int, week_id: int, order_data: dic
         )
         db.add(order)
 
-    # --- CORRECCIÓN LÓGICA IMPORTANTE ---
-    # En lugar de hacer setattr(order, "lunes_principal"), guardamos todo en 'details'
-    # porque tu modelo de base de datos usa una columna JSON para esto.
-    order.details = order_data  # SQLAlchemy maneja la conversión a JSON automáticamente
+    # Guarda todo en la columna JSON 'details'
+    order.details = order_data
     order.notes = notes
     
     try:
@@ -104,4 +102,50 @@ def user_dashboard(db_session_maker, user_id):
                 field_key = f"{day_key}{suffix}" # ej: monday_principal
                 current_val = existing_details.get(field_key)
                 
-                # 3. Buscar el índice correcto para el select
+                # 3. Buscar el índice correcto para el selectbox
+                default_label = "NO PEDIDO"
+                # Buscamos qué etiqueta (label) corresponde al valor guardado (current_val)
+                for label, val in options.items():
+                    if val == current_val:
+                        default_label = label
+                        break
+                
+                try:
+                    default_index = list(options.keys()).index(default_label)
+                except ValueError:
+                    default_index = 0
+
+                # 4. Renderizar Selectbox (¡Aquí faltaba!)
+                selection = cols[i].selectbox(
+                    f"{title} {day_names[day_key]}", 
+                    options=list(options.keys()),
+                    index=default_index,
+                    key=f"sel_{field_key}", # Clave única para Streamlit
+                    label_visibility="collapsed"
+                )
+                
+                # Guardamos el ID de la opción seleccionada (o None si es NO PEDIDO)
+                order_values[field_key] = options[selection]
+
+        st.markdown("---")
+        
+        # Campo de Notas
+        initial_notes = existing_order.notes if existing_order else ""
+        notes = st.text_area("Notas / Sugerencias", value=initial_notes, help="(Agrega sugerencia o aviso si deseas)")
+        
+        st.write(" ") 
+
+        # 5. BOTÓN DE ENVÍO (¡Aquí faltaba!)
+        submitted = st.form_submit_button("🚀 Enviar Pedido Semanal")
+        
+        if submitted:
+            success = submit_weekly_order(db, user_id, current_week.id, order_values, notes)
+            
+            if success:
+                st.success("✅ ¡Pedido semanal guardado exitosamente!")
+                st.balloons()
+                st.rerun() 
+            else:
+                st.error("❌ Error al guardar el pedido. Intenta de nuevo.")
+
+    db.close()
