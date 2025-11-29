@@ -66,15 +66,25 @@ def finalize_week_logic(db: Session, week_id: int):
     existing_orders = db.query(Order).filter(Order.week_id == week_id).all()
     users_with_order_ids = {o.user_id for o in existing_orders}
 
+    # Días clave usados en el menú y el pedido (en minúsculas)
+    day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    
     # 2. Crear registros de 'no_pedido' para auditoría histórica
     for user in active_users:
         if user.id not in users_with_order_ids:
-            # Crea un pedido de auditoría para usuarios que no pidieron
+            # Crea un diccionario de detalles vacío para el "no_pedido"
+            ghost_details = {}
+            for day in day_keys:
+                # Usar las claves esperadas por la exportación (ej: monday_principal)
+                # y asignar el valor nulo que la exportación tratará como "NO PEDIDO"
+                for db_type in ["principal", "side", "salad"]:
+                    ghost_details[f"{day}_{db_type}"] = None 
+
             ghost_order = Order(
                 user_id=user.id,
                 week_id=week_id,
                 status="no_pedido",
-                details={day: "NO PEDIDO" for day in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]}
+                details=ghost_details # Usar la estructura de claves completa pero con valor None
             )
             db.add(ghost_order)
     
@@ -125,9 +135,11 @@ def export_week_to_excel(db: Session, week_id: int):
                 
                 item_description = "NO PEDIDO"
 
-                if option_id_or_string is None or option_id_or_string == "NO PEDIDO":
-                    item_description = "NO PEDIDO"
-                elif isinstance(option_id_or_string, int):
+                # Ahora option_id_or_string será:
+                # 1. Un entero (ID del plato) si el usuario pidió
+                # 2. None si es un ghost_order (o si un usuario pidió pero no seleccionó ese plato)
+                
+                if isinstance(option_id_or_string, int):
                     # Es un ID numérico (pedido real)
                     option_id = option_id_or_string
                     
@@ -138,7 +150,12 @@ def export_week_to_excel(db: Session, week_id: int):
                     
                     item_description = menu_item_cache.get(option_id, "Opción Desconocida")
                 else:
-                    item_description = "Dato Inválido"
+                    # Si es None, o si por error contiene el string "NO PEDIDO", lo marcamos
+                    if order.status == "no_pedido" or option_id_or_string is None:
+                         item_description = "NO PEDIDO"
+                    else:
+                        item_description = "Dato Inválido"
+
 
                 # Asignar la descripción directamente a la nueva columna
                 row[col_name] = item_description
@@ -160,7 +177,7 @@ def export_week_to_excel(db: Session, week_id: int):
     
     # Nombre archivo seguro
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
-    filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx" # Nombre actualizado para indicar versión Cocina
+    filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx"
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)
@@ -171,5 +188,4 @@ def export_week_to_excel(db: Session, week_id: int):
     db.add(log)
     db.commit()
     
-    # ¡FIN DE LA FUNCIÓN export_week_to_excel! Esto debe funcionar.
     return path, "Exportación exitosa"
