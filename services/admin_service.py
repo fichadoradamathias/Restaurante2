@@ -103,11 +103,9 @@ def export_week_to_excel(db: Session, week_id: int):
     for order in orders:
         details = order.details 
         
-        # Incluimos Status y Notas en la exportación
+        # ✅ CORRECCIÓN FINAL: SOLO incluimos "Usuario". NO incluimos Status ni Notas.
         row = {
             "Usuario": order.user.full_name,
-            "Status": order.status, 
-            "Notas": order.notes if order.notes else ""
         }
         
         # Iterar por cada día y por cada tipo de plato
@@ -123,19 +121,24 @@ def export_week_to_excel(db: Session, week_id: int):
                 # Nombre de la columna en el Excel: Lunes - Comida, Lunes - Acompañamiento, etc.
                 col_name = f"{day_name} - {label}" 
                 
-                # option_id es el ID numérico del item seleccionado (o None si NO PEDIDO)
-                option_id = details.get(field_key) 
+                option_id_or_string = details.get(field_key) 
                 
                 item_description = "NO PEDIDO"
 
-                if option_id:
-                    # Si el item_id no está en caché, lo buscamos en la base de datos
+                if option_id_or_string is None or option_id_or_string == "NO PEDIDO":
+                    item_description = "NO PEDIDO"
+                elif isinstance(option_id_or_string, int):
+                    # Es un ID numérico (pedido real)
+                    option_id = option_id_or_string
+                    
                     if option_id not in menu_item_cache:
                         menu_item = db.query(MenuItem).filter(MenuItem.id == option_id).first()
                         if menu_item:
                             menu_item_cache[option_id] = menu_item.description
                     
                     item_description = menu_item_cache.get(option_id, "Opción Desconocida")
+                else:
+                    item_description = "Dato Inválido"
 
                 # Asignar la descripción directamente a la nueva columna
                 row[col_name] = item_description
@@ -144,8 +147,8 @@ def export_week_to_excel(db: Session, week_id: int):
 
     df = pd.DataFrame(data)
     
-    # Definir el orden final de las columnas
-    final_cols = ["Usuario", "Status", "Notas"]
+    # ✅ CORRECCIÓN FINAL: Definir el orden final de las columnas SIN Status ni Notas
+    final_cols = ["Usuario"]
     
     # Construir dinámicamente el resto de las columnas para asegurar el orden
     for day_name in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]:
@@ -157,7 +160,7 @@ def export_week_to_excel(db: Session, week_id: int):
     
     # Nombre archivo seguro
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
-    filename = f"{safe_title}_DETALLADO_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx"
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)
