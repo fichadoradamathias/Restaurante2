@@ -39,22 +39,35 @@ def main():
     if not st.session_state.user_id:
         show_login_screen()
         
+
     # CASO B: LOGUEADO -> MOSTRAR PANEL SEGÚN ROL
     else:
+        # Check if the user is an admin
         if st.session_state.role == "admin":
-            # Navegación interna para Admin
-            menu_admin = st.sidebar.radio("Navegación Admin", ["Gestionar Semanas/Menú", "Usuarios", "Auditoría"])
+            
+            # --- BLOQUE ACTUALIZADO DE NAVEGACIÓN ---
+            menu_admin = st.sidebar.radio(
+                "Navegación Admin", 
+                # Se añade la opción "Mi Pedido (Vista Usuario)"
+                ["Gestionar Semanas/Menú", "Usuarios", "Auditoría", "Mi Pedido (Vista Usuario)"] 
+            )
+            # --- FIN BLOQUE ACTUALIZADO ---
             
             if menu_admin == "Gestionar Semanas/Menú":
                 admin_dashboard(SessionLocal)
             elif menu_admin == "Usuarios":
-                # Asegúrate de importar esto si lo usas, o usa admin_dashboard si lo integraste ahí
                 user_management_dashboard(SessionLocal)
             elif menu_admin == "Auditoría":
                 audit_log_page(SessionLocal, st.session_state.user_name)
+            
+            # --- NUEVA LÓGICA PARA VER EL PANEL DE USUARIO ---
+            elif menu_admin == "Mi Pedido (Vista Usuario)":
+                st.subheader("👤 Modo de Prueba: Realizar Pedido")
+                # Se llama la función del panel de usuario, permitiendo al admin ordenar para sí mismo.
+                user_dashboard(SessionLocal, st.session_state.user_id)
                 
+        # If the user is a regular user
         elif st.session_state.role == "user":
-            # Panel de Usuario Normal
             user_dashboard(SessionLocal, st.session_state.user_id)
         
         else:
