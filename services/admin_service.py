@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
 from database.models import Week, Order, User, MenuItem, ExportLog
 
-# --- FUNCIONES DE GESTIÓN DE MENÚ (Nuevas para la edición) ---
+# --- FUNCIONES DE GESTIÓN DE MENÚ ---
 
 def update_menu_item(db: Session, item_id: int, new_description: str, new_option_number: int):
     """Actualiza la descripción y número de opción de un ítem del menú."""
@@ -69,7 +69,7 @@ def finalize_week_logic(db: Session, week_id: int):
     # 2. Crear registros de 'no_pedido' para auditoría histórica
     for user in active_users:
         if user.id not in users_with_order_ids:
-            # CORRECCIÓN 1: Usar 'details' en lugar de 'details_json' y sin json.dumps
+            # Crea un pedido de auditoría para usuarios que no pidieron
             ghost_order = Order(
                 user_id=user.id,
                 week_id=week_id,
@@ -93,9 +93,7 @@ def export_week_to_excel(db: Session, week_id: int):
     
     # Días clave usados en el menú y el pedido (en minúsculas)
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
-    # Nombres de columna en Excel
-    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-
+    
     # Tipos de plato y sus etiquetas para la exportación
     meal_types = [("principal", "Comida"), ("side", "Acompañamiento"), ("salad", "Ensalada")]
 
@@ -103,24 +101,27 @@ def export_week_to_excel(db: Session, week_id: int):
     menu_item_cache = {} # Key: item_id, Value: description
 
     for order in orders:
-        # CORRECCIÓN 2: Usar order.details y no order.details_json ni json.loads
         details = order.details 
         
+        # Incluimos Status y Notas en la exportación
         row = {
             "Usuario": order.user.full_name,
-            # Se eliminan Status y Fecha Pedido según tu solicitud de sólo 5 columnas
+            "Status": order.status, 
+            "Notas": order.notes if order.notes else ""
         }
         
         # Iterar por cada día y por cada tipo de plato
-        for day_index, day in enumerate(day_keys):
-            full_day_details = []
+        for day in day_keys:
             
-            # Nombre de la columna en el Excel: Lunes, Martes, etc.
-            col_name = day_names[day_index]
+            # Nombre del día legible
+            day_name = day.capitalize()
             
             for db_type, label in meal_types:
                 # La clave en el JSON es (ej: monday_principal)
                 field_key = f"{day}_{db_type}" 
+                
+                # Nombre de la columna en el Excel: Lunes - Comida, Lunes - Acompañamiento, etc.
+                col_name = f"{day_name} - {label}" 
                 
                 # option_id es el ID numérico del item seleccionado (o None si NO PEDIDO)
                 option_id = details.get(field_key) 
@@ -136,25 +137,27 @@ def export_week_to_excel(db: Session, week_id: int):
                     
                     item_description = menu_item_cache.get(option_id, "Opción Desconocida")
 
-                # Formato solicitado: "Comida: Pollo"
-                full_day_details.append(f"{label}: {item_description}")
-            
-            # Unir los 3 detalles en una sola celda, separados por salto de línea
-            row[col_name] = "\n".join(full_day_details)
+                # Asignar la descripción directamente a la nueva columna
+                row[col_name] = item_description
 
         data.append(row)
 
     df = pd.DataFrame(data)
     
-    # Definir el orden y las columnas finales solicitadas
-    final_cols = ["Usuario"] + day_names 
+    # Definir el orden final de las columnas
+    final_cols = ["Usuario", "Status", "Notas"]
+    
+    # Construir dinámicamente el resto de las columnas para asegurar el orden
+    for day_name in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]:
+        for label in ["Comida", "Acompañamiento", "Ensalada"]:
+            final_cols.append(f"{day_name} - {label}")
     
     # Creamos un nuevo DataFrame con el orden de columnas deseado
     df_final = df[final_cols] 
     
     # Nombre archivo seguro
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
-    filename = f"{safe_title}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    filename = f"{safe_title}_DETALLADO_{datetime.now().strftime('%Y%m%d')}.xlsx"
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)

@@ -14,7 +14,8 @@ def get_menu_options_by_type(db: Session, week_id: int, day: str, meal_type: str
     options = {"NO PEDIDO": None}
     for item in items:
         # Crea una etiqueta legible: "Opción 1: Pollo al horno"
-        options[f"Opción {item.option_number}: {item.description}"] = item.option_number
+        # ¡CORRECCIÓN CLAVE! Ahora guardamos el ID ÚNICO (item.id) en el valor del diccionario.
+        options[f"Opción {item.option_number}: {item.description}"] = item.id
     return options
 
 def get_user_order(db: Session, user_id: int, week_id: int):
@@ -104,7 +105,7 @@ def user_dashboard(db_session_maker, user_id):
                 
                 # 3. Buscar el índice correcto para el selectbox
                 default_label = "NO PEDIDO"
-                # Buscamos qué etiqueta (label) corresponde al valor guardado (current_val)
+                # Buscamos qué etiqueta (label) corresponde al valor guardado (current_val, que ahora es el ID)
                 for label, val in options.items():
                     if val == current_val:
                         default_label = label
@@ -115,7 +116,7 @@ def user_dashboard(db_session_maker, user_id):
                 except ValueError:
                     default_index = 0
 
-                # 4. Renderizar Selectbox (¡Aquí faltaba!)
+                # 4. Renderizar Selectbox 
                 selection = cols[i].selectbox(
                     f"{title} {day_names[day_key]}", 
                     options=list(options.keys()),
@@ -135,7 +136,7 @@ def user_dashboard(db_session_maker, user_id):
         
         st.write(" ") 
 
-        # 5. BOTÓN DE ENVÍO (¡Aquí faltaba!)
+        # 5. BOTÓN DE ENVÍO
         submitted = st.form_submit_button("🚀 Enviar Pedido Semanal")
         
         if submitted:
