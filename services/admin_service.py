@@ -64,7 +64,6 @@ def finalize_week_logic(db: Session, week_id: int):
     existing_orders = db.query(Order).filter(Order.week_id == week_id).all()
     users_with_order_ids = {o.user_id for o in existing_orders}
 
-    # Días clave usados en el menú y el pedido
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"]
     
     # 2. Crear registros de 'no_pedido' para auditoría histórica
@@ -96,11 +95,8 @@ def export_week_to_excel(db: Session, week_id: int):
     
     data = []
     
-    # Días clave usados en el menú y el pedido (en minúsculas)
+    # Definimos las claves internas (inglés) y las columnas externas (español)
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
-    
-    # ✅ CORRECCIÓN CRÍTICA: Mapa para traducir las claves de inglés a nombres en español
-    # Esto asegura que row["Lunes - Comida"] coincida con final_cols["Lunes - Comida"]
     english_to_spanish = {
         "monday": "Lunes",
         "tuesday": "Martes",
@@ -109,31 +105,30 @@ def export_week_to_excel(db: Session, week_id: int):
         "friday": "Viernes"
     }
     
-    # Tipos de plato y sus etiquetas para la exportación
     meal_types = [("principal", "Comida"), ("side", "Acompañamiento"), ("salad", "Ensalada")]
 
-    # Crear un caché para no consultar la base de datos por cada ítem
+    # 1. Pre-definimos las columnas finales para evitar KeyErrors
+    final_cols = ["Usuario"]
+    for d_key in day_keys:
+        d_name = english_to_spanish[d_key]
+        for _, label in meal_types:
+            final_cols.append(f"{d_name} - {label}")
+
     menu_item_cache = {} 
 
     for order in orders:
         details = order.details 
+        row = { "Usuario": order.user.full_name }
         
-        row = {
-            "Usuario": order.user.full_name,
-        }
-        
-        # Iterar por cada día
         for day in day_keys:
-            
-            # ✅ USAMOS EL MAPA DE TRADUCCIÓN AQUÍ
-            # En lugar de day.capitalize(), usamos el nombre en español
-            day_name_es = english_to_spanish[day] 
+            # Traducimos "monday" -> "Lunes" para que coincida con la columna
+            day_name_es = english_to_spanish[day]
             
             for db_type, label in meal_types:
-                # La clave en el JSON sigue siendo en inglés (ej: monday_principal)
+                # Clave para buscar en la BD (ej: monday_principal)
                 field_key = f"{day}_{db_type}" 
                 
-                # El nombre de la columna en Excel ahora usa el español (ej: Lunes - Comida)
+                # Nombre de la columna en el Excel (ej: Lunes - Comida)
                 col_name = f"{day_name_es} - {label}" 
                 
                 option_id_or_string = details.get(field_key) 
@@ -152,31 +147,22 @@ def export_week_to_excel(db: Session, week_id: int):
                 else:
                     item_description = "Dato Inválido"
 
-                # Asignar a la columna (ej: Lunes - Comida)
                 row[col_name] = item_description
 
         data.append(row)
 
-    df = pd.DataFrame(data)
+    # Creamos el DataFrame forzando las columnas. Si falta algún dato, pondrá NaN (evita error)
+    df = pd.DataFrame(data, columns=final_cols)
     
-    # Definir el orden final de las columnas SIN Status ni Notas
-    final_cols = ["Usuario"]
-    
-    # Construir dinámicamente el resto de las columnas
-    # Nota: Usamos exactamente los mismos nombres en español que en el mapa
-    for day_name in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]:
-        for label in ["Comida", "Acompañamiento", "Ensalada"]:
-            final_cols.append(f"{day_name} - {label}")
-    
-    # Ahora sí, las columnas en 'df' (creadas en el loop) coinciden con 'final_cols'
-    df_final = df[final_cols] 
-    
+    # Rellenamos posibles NaNs con cadena vacía por limpieza
+    df = df.fillna("")
+
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
     filename = f"{safe_title}_DETALLADO_COCINA_{datetime.now().strftime('%Y%m%d')}.xlsx"
     path = f"data/exports/{filename}"
     
     os.makedirs("data/exports", exist_ok=True)
-    df_final.to_excel(path, index=False) 
+    df.to_excel(path, index=False) 
     
     log = ExportLog(week_id=week_id, filename=path)
     db.add(log)
