@@ -1,3 +1,5 @@
+# services/admin_service.py
+
 import pandas as pd
 import json
 import os
@@ -69,7 +71,6 @@ def finalize_week_logic(db: Session, week_id: int):
     # 2. Crear registros de 'no_pedido' para auditoría histórica
     for user in active_users:
         if user.id not in users_with_order_ids:
-            # Crea un diccionario de detalles vacío para el "no_pedido"
             ghost_details = {}
             for day in day_keys:
                 for db_type in ["principal", "side", "salad"]:
@@ -95,7 +96,6 @@ def export_week_to_excel(db: Session, week_id: int):
     
     data = []
     
-    # Definimos las claves internas (inglés) y las columnas externas (español)
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
     english_to_spanish = {
         "monday": "Lunes",
@@ -121,18 +121,12 @@ def export_week_to_excel(db: Session, week_id: int):
         row = { "Usuario": order.user.full_name }
         
         for day in day_keys:
-            # Traducimos "monday" -> "Lunes" para que coincida con la columna
             day_name_es = english_to_spanish[day]
             
             for db_type, label in meal_types:
-                # Clave para buscar en la BD (ej: monday_principal)
                 field_key = f"{day}_{db_type}" 
-                
-                # Nombre de la columna en el Excel (ej: Lunes - Comida)
                 col_name = f"{day_name_es} - {label}" 
-                
                 option_id_or_string = details.get(field_key) 
-                
                 item_description = "NO PEDIDO"
 
                 if isinstance(option_id_or_string, int):
@@ -151,10 +145,7 @@ def export_week_to_excel(db: Session, week_id: int):
 
         data.append(row)
 
-    # Creamos el DataFrame forzando las columnas. Si falta algún dato, pondrá NaN (evita error)
     df = pd.DataFrame(data, columns=final_cols)
-    
-    # Rellenamos posibles NaNs con cadena vacía por limpieza
     df = df.fillna("")
 
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
@@ -169,3 +160,59 @@ def export_week_to_excel(db: Session, week_id: int):
     db.commit()
     
     return path, "Exportación exitosa"
+
+
+# =======================================================
+# --- NUEVAS FUNCIONES PARA EL PANEL DE USUARIO (2.0) ---
+# =======================================================
+
+def check_existing_order(db: Session, user_id: int, week_id: int):
+    """
+    Verifica si el usuario ya tiene un pedido (status != 'no_pedido') en la semana.
+    """
+    # Buscamos si existe un pedido para esa semana y ese usuario,
+    # excluyendo los registros de auditoría ('no_pedido')
+    existing_order = db.query(Order).filter(
+        Order.user_id == user_id,
+        Order.week_id == week_id,
+        Order.status != 'no_pedido' # Ignoramos los pedidos de auditoría
+    ).first()
+    
+    return existing_order is not None
+
+def get_menu_options_for_week(db: Session, week_id: int):
+    """
+    Obtiene el menú completo de la semana y lo estructura por día y tipo de plato.
+    
+    Retorna un diccionario:
+    {
+        'Lunes': {
+            'principal': [(id, desc, opt_num), ...],
+            'side': [...],
+            'salad': [...]
+        },
+        ...
+    }
+    """
+    menu_items = db.query(MenuItem).filter(
+        MenuItem.week_id == week_id
+    ).order_by(
+        MenuItem.day, MenuItem.type, MenuItem.option_number
+    ).all()
+
+    menu = {
+        "Lunes": {"principal": [], "side": [], "salad": []},
+        "Martes": {"principal": [], "side": [], "salad": []},
+        "Miércoles": {"principal": [], "side": [], "salad": []},
+        "Jueves": {"principal": [], "side": [], "salad": []},
+        "Viernes": {"principal": [], "side": [], "salad": []},
+    }
+
+    for item in menu_items:
+        # Añadir como tupla (ID, Descripción, N° Opción)
+        item_data = (item.id, item.description, item.option_number)
+        
+        if item.day in menu and item.type in menu[item.day]:
+            menu[item.day][item.type].append(item_data)
+
+    return menu
