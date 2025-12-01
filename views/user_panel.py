@@ -83,11 +83,13 @@ def user_dashboard(db_session_maker, user_id):
         if st.button("◀ Anterior"):
             st.session_state.menu_day_idx = max(0, st.session_state.menu_day_idx - 1)
             st.rerun()
+            st.stop() # <-- CORRECCIÓN APLICADA
             
     with col_next:
         if st.button("Siguiente ▶"):
             st.session_state.menu_day_idx = min(4, st.session_state.menu_day_idx + 1)
             st.rerun()
+            st.stop() # <-- CORRECCIÓN APLICADA
 
     # Mostrar el día actual del carrusel
     current_day_name = days_list[st.session_state.menu_day_idx]
@@ -111,7 +113,6 @@ def user_dashboard(db_session_maker, user_id):
             column.info(f"**Opción {opt_num}**\n\n{desc}")
 
     # Usamos las claves correctas del diccionario retornado por get_menu_options_for_week
-    # Nota: Asegúrate de que en admin_service.py las claves sean 'principal', 'side', 'salad'
     show_items(mc1, "🍖 Almuerzo / Principal", day_data.get('principal', []))
     show_items(mc2, "🍚 Acompañamiento", day_data.get('side', []))
     show_items(mc3, "🥗 Ensalada", day_data.get('salad', []))
@@ -136,12 +137,13 @@ def user_dashboard(db_session_maker, user_id):
         
         # Recuperar para mostrar un mini resumen (opcional)
         order = get_user_order(db, user_id, current_week.id)
-        if order.notes:
+        if order and order.notes:
             st.write(f"**Notas enviadas:** {order.notes}")
             
         if st.button("✏️ Modificar mi Pedido"):
             st.session_state.editing_mode = True
             st.rerun()
+            st.stop() # <-- CORRECCIÓN APLICADA
             
     # CASO B: NO HA PEDIDO O ESTÁ EDITANDO -> MOSTRAR FORMULARIO
     else:
@@ -221,6 +223,7 @@ def user_dashboard(db_session_maker, user_id):
                     st.session_state.editing_mode = False # Salir del modo edición
                     st.balloons()
                     st.rerun() 
+                    st.stop() # <-- CORRECCIÓN APLICADA
                 else:
                     st.error("❌ Error al guardar el pedido. Intenta de nuevo.")
 
