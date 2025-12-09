@@ -1,23 +1,28 @@
-# init_db.py (Código completo)
-from database.models import Base, User # Importamos User
-from database.connection import engine, SessionLocal 
-from services.auth import hash_password # Necesitas esta función para hashear la contraseña
+# init_db.py
 
-# Esta línea le dice a SQLAlchemy que cree todas las tablas que definimos en models.py
+# Importamos la función con el nombre correcto: get_password_hash
+from database.models import Base, User 
+from database.connection import engine, SessionLocal 
+from services.auth import get_password_hash 
+
+# 1. Crear todas las tablas
 Base.metadata.create_all(engine) 
 
-# --- NUEVA LÓGICA DE CREACIÓN DE USUARIO ADMIN ---
+# 2. Crear usuario Admin inicial
 db = SessionLocal()
 try:
     if db.query(User).filter(User.username == "admin").first() is None:
-
+        
+        # Crear la contraseña hasheada usando la función correcta
+        hashed_pw = get_password_hash("admin_pass") # ⬅️ FUNCIÓN CORREGIDA
+        
         # NOTA CLAVE: office_id=None porque la tabla offices está vacía al inicio
         admin_user = User(
             username="admin", 
             full_name="Administrador Jefe",
-            password_hash=hash_password("admin_pass"), # ¡CAMBIA ESTA CONTRASEÑA!
+            password_hash=hashed_pw,
             role="admin",
-            office_id=None # Importante: No asignamos oficina al inicio
+            office_id=None 
         )
         db.add(admin_user)
         db.commit()
@@ -29,6 +34,5 @@ except Exception as e:
     db.rollback()
 finally:
     db.close()
-# ----------------------------------------------------
 
 print("Base de datos inicializada y tablas creadas exitosamente.")

@@ -1,7 +1,9 @@
+# services/auth.py
 import bcrypt
 from sqlalchemy.orm import Session
-from database.models import User
-from services.audit_service import create_log_entry # ⬅️ 1. NUEVA IMPORTACIÓN
+# Asegúrate de que User y Office estén importados
+from database.models import User, Office 
+from services.audit_service import create_log_entry 
 
 # --- FUNCIONES CORE (HASHING) ---
 
@@ -25,7 +27,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def authenticate_user(db: Session, username: str, password: str):
     """Busca al usuario y valida su contraseña."""
+    # Nota: Si el usuario es consultado en el login, SQLAlchemy debe poder 
+    # manejar la relación User.office aunque sea NULL.
     user = db.query(User).filter(User.username == username).first()
+    
     if not user:
         return None
     if not verify_password(password, user.password_hash):
@@ -36,7 +41,7 @@ def authenticate_user(db: Session, username: str, password: str):
 
 # --- GESTIÓN DE USUARIOS (CRUD) ---
 
-def create_user(db: Session, username, full_name, password, role="user"):
+def create_user(db: Session, username, full_name, password, office_id: int = None, role="user"):
     """Crea un nuevo usuario en la base de datos."""
     # 1. Verificar si ya existe
     existing_user = db.query(User).filter(User.username == username).first()
@@ -52,7 +57,8 @@ def create_user(db: Session, username, full_name, password, role="user"):
         full_name=full_name,
         password_hash=hashed_pwd,
         role=role,
-        is_active=True
+        is_active=True,
+        office_id=office_id # <-- Agregamos el campo office_id
     )
     
     try:
@@ -64,8 +70,8 @@ def create_user(db: Session, username, full_name, password, role="user"):
         db.rollback()
         return False, f"Error al crear usuario: {str(e)}"
 
-def update_user_details(db: Session, user_id: int, username: str, full_name: str, role: str, is_active: bool):
-    """Actualiza datos del perfil, INCLUYENDO el nombre de usuario (Login)."""
+def update_user_details(db: Session, user_id: int, username: str, full_name: str, office_id: int, role: str, is_active: bool):
+    """Actualiza datos del perfil, INCLUYENDO la asignación de oficina."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return False, "Usuario no encontrado."
@@ -73,15 +79,23 @@ def update_user_details(db: Session, user_id: int, username: str, full_name: str
     # Validación: Si el nombre de usuario cambió, verificar que no esté ocupado
     if user.username != username:
         existing = db.query(User).filter(User.username == username).first()
-        if existing:
-            return False, f"El usuario '{username}' ya existe. Elija otro."
+        if existing and existing.id != user_id:
+             return False, f"El usuario '{username}' ya existe. Elija otro."
 
     try:
+        # Registrar el cambio de rol o estado para auditoría (Opcional, pero recomendado)
+        
         user.username = username
         user.full_name = full_name
         user.role = role
         user.is_active = is_active
+        user.office_id = office_id # <-- NUEVO: Asignación de Oficina
+        
         db.commit()
+        
+        # Integración del Log de Auditoría (Ejemplo)
+        # Aquí puedes registrar quién hizo el cambio y qué cambió.
+        
         return True, "Datos actualizados correctamente."
     except Exception as e:
         db.rollback()
@@ -102,9 +116,10 @@ def reset_user_password(db: Session, user_id: int, new_password: str):
             # Aquí registramos que la contraseña de este usuario fue reseteada
             create_log_entry(
                 db, 
-                user_id=user_id, 
+                actor_id=user_id, # Asumimos que el actor del cambio es el admin logueado
+                target_username=user.username,
                 action="PASSWORD_RESET_ADMIN", 
-                details=f"Contraseña reseteada por un administrador. Usuario afectado: {user.username}"
+                details=f"Contraseña reseteada por un administrador."
             )
         except Exception as log_e:
             # Si el log falla, no queremos que falle el reset de contraseña
