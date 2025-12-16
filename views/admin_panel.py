@@ -1,6 +1,6 @@
 # views/admin_panel.py
 import streamlit as st
-from database.models import Week, MenuItem, Office # Importar Office
+from database.models import Week, MenuItem, Office 
 # Importamos funciones nuevas
 from services.admin_service import (
     create_week, finalize_week_logic, update_menu_item, delete_menu_item, 
@@ -48,7 +48,7 @@ def admin_dashboard(db_session_maker):
                         st.rerun()
         else: st.info("No hay semanas.")
 
-    # --- TAB 2: MENÚ (Sin cambios grandes, solo lo esencial) ---
+    # --- TAB 2: MENÚ ---
     with tab2:
         st.subheader("Cargar opciones")
         open_weeks = db.query(Week).filter(Week.is_open == True).all()
@@ -58,14 +58,9 @@ def admin_dashboard(db_session_maker):
             sel_week_title = st.selectbox("Semana", list(week_opts.keys()))
             sel_week_id = week_opts[sel_week_title]
             
-            # ... (Lógica de agregar platos igual que antes) ...
-            # Por brevedad, asumo que mantienes tu lógica de formulario aquí
-            # Solo asegúrate de que el código siga ahí si copias y pegas.
-            # Si quieres, puedo pegarte el bloque completo de menú de nuevo.
-            # Para este ejemplo, enfoco en lo nuevo:
-            
+            # (Aquí iría tu formulario de add_item_form que ya tienes en el original)
             st.info("Utiliza el formulario habitual para cargar platos.") 
-            # (Aquí iría tu formulario de add_item_form y la tabla editable del mensaje anterior)
+            # Si necesitas el código del menú, avísame, pero dijiste que solo querías la estructura actualizada
 
     # --- TAB 3: OFICINAS (NUEVO) ---
     with tab3:
@@ -87,6 +82,7 @@ def admin_dashboard(db_session_maker):
             for off in offices:
                 c1, c2 = st.columns([3, 1])
                 c1.write(f"🏢 **{off.name}**")
+                # Botón de borrar con validación (manejada en el servicio)
                 if c2.button("Borrar", key=f"del_off_{off.id}"):
                     ok, msg = delete_office(db, off.id)
                     if ok: st.success(msg); st.rerun()
@@ -94,52 +90,76 @@ def admin_dashboard(db_session_maker):
         else:
             st.info("No hay oficinas creadas. Crea una (ej: Las Tórtolas).")
 
-    # --- TAB 4: CIERRE Y EXPORTACIÓN ---
+    # --- TAB 4: CIERRE Y EXPORTACIÓN (ACTUALIZADO) ---
     with tab4:
-        st.subheader("Exportación Avanzada")
+        st.subheader("📊 Centro de Exportación")
         
-        # Selector de Oficina para Exportar
-        all_offices = get_all_offices(db)
-        # Diccionario nombre -> ID. None es "Todas"
-        office_opts = {"📦 TODAS LAS OFICINAS": None}
-        for o in all_offices:
-            office_opts[o.name] = o.id
-            
-        selected_office_label = st.selectbox("Filtrar por Oficina:", list(office_opts.keys()))
-        selected_office_id = office_opts[selected_office_label]
-
-        st.markdown("---")
-        st.write("### Semanas para Exportar")
-        
-        # Listar todas las semanas (abiertas o cerradas) para permitir re-exportar
+        # Seleccionar Semana
         all_weeks = db.query(Week).order_by(Week.start_date.desc()).all()
         
-        if all_weeks:
+        if not all_weeks:
+            st.info("No hay semanas registradas.")
+        else:
             week_map = {f"{w.title} ({'Abierta' if w.is_open else 'Cerrada'})": w.id for w in all_weeks}
-            sel_week_ex_label = st.selectbox("Seleccionar Semana", list(week_map.keys()))
+            sel_week_ex_label = st.selectbox("Seleccionar Semana para Exportar", list(week_map.keys()))
             sel_week_ex_id = week_map[sel_week_ex_label]
             
-            # Botón de Generar Excel
-            btn_label = f"📄 Generar Excel ({selected_office_label})"
-            if st.button(btn_label):
-                path, msg = export_week_to_excel(db, sel_week_ex_id, selected_office_id)
+            st.markdown("---")
+            st.write("### 📥 Descargar Reportes")
+
+            # Obtenemos todas las oficinas para generar botones
+            all_offices = get_all_offices(db)
+            
+            if not all_offices:
+                st.warning("No hay oficinas configuradas.")
+            
+            # Iteramos oficinas para crear un botón por cada una
+            st.info("Generar reporte individual por oficina:")
+            
+            for office in all_offices:
+                col_btn, col_dl = st.columns([1, 1])
+                with col_btn:
+                    # Botón para generar/descargar de una oficina específica
+                    if st.button(f"📄 {office.name}", key=f"btn_exp_{office.id}_{sel_week_ex_id}", use_container_width=True):
+                        path, msg = export_week_to_excel(db, sel_week_ex_id, office.id)
+                        if path:
+                            st.session_state[f"last_export_{office.id}"] = path
+                            st.success(msg)
+                        else:
+                            st.error(msg)
+                
+                # Mostrar botón de descarga si el archivo fue generado
+                with col_dl:
+                    if f"last_export_{office.id}" in st.session_state:
+                        path = st.session_state[f"last_export_{office.id}"]
+                        if os.path.exists(path):
+                            with open(path, "rb") as f:
+                                st.download_button(
+                                    label=f"⬇️ Descargar {office.name}",
+                                    data=f,
+                                    file_name=path.split("/")[-1],
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"dl_{office.id}_{sel_week_ex_id}"
+                                )
+
+            st.markdown("---")
+            # Botón para exportar TODO junto (Backup)
+            if st.button("📦 Exportar TODAS las Oficinas (Consolidado)", type="primary"):
+                path, msg = export_week_to_excel(db, sel_week_ex_id, None)
                 if path:
                     with open(path, "rb") as f:
-                        st.download_button("📥 Descargar Archivo", f, file_name=path.split("/")[-1])
-                    st.success(msg)
-                else:
-                    st.error(msg)
+                        st.download_button("⬇️ Descargar Consolidado", f, file_name=path.split("/")[-1])
             
-            # Botón de Cerrar Semana (Solo si está abierta)
-            # Buscamos el objeto semana para ver si está abierto
+            # --- SECCIÓN DE CIERRE (ZONA DE PELIGRO) ---
             w_obj = db.query(Week).filter(Week.id == sel_week_ex_id).first()
             if w_obj and w_obj.is_open:
-                st.divider()
-                st.warning("Zona de Peligro")
-                if st.button("⛔ CERRAR SEMANA (Finalizar)"):
-                    # Al cerrar, usa el filtro por defecto (Todas) o null
+                st.markdown("---")
+                st.error("🚫 Zona de Cierre")
+                st.caption("Al cerrar la semana, se generarán automáticamente los pedidos vacíos para usuarios que no ordenaron.")
+                
+                if st.button("🔒 CERRAR SEMANA FINALMENTE"):
                     path, msg = finalize_week_logic(db, sel_week_ex_id)
-                    st.success("Semana cerrada exitosamente.")
+                    st.success("Semana cerrada. Se ha generado el reporte global.")
                     st.rerun()
 
     db.close()
