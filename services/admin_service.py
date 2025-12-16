@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
 # IMPORTANTE: Agregamos Office a los imports
-from database.models import Week, Order, User, MenuItem, ExportLog, AuditLog, Office 
+from database.models import Week, Order, User, MenuItem, ExportLog, AuditLog, Office
 
 # --- FUNCIONES DE AUDITORÍA ---
 def create_log_entry(db: Session, actor_id: int, target_username: str, action: str, old_value: str = None, new_value: str = None, details: str = None):
@@ -23,8 +23,13 @@ def create_log_entry(db: Session, actor_id: int, target_username: str, action: s
 
 # --- FUNCIONES DE OFICINAS (NUEVO) ---
 def create_office(db: Session, name: str):
+    name = name.strip()
+    if not name:
+        return False, "El nombre de la oficina no puede estar vacío."
+
     if db.query(Office).filter(Office.name == name).first():
         return False, "La oficina ya existe."
+        
     new_office = Office(name=name)
     db.add(new_office)
     try:
@@ -38,13 +43,22 @@ def get_all_offices(db: Session):
     return db.query(Office).order_by(Office.name).all()
 
 def delete_office(db: Session, office_id: int):
-    # Nota: Si borras una oficina con usuarios, estos quedarán con office_id inválido o null.
-    # Idealmente reasignar antes.
+    # 1. VALIDACIÓN: Verificar si hay usuarios asignados antes de borrar
+    users_count = db.query(User).filter(User.office_id == office_id).count()
+    
+    if users_count > 0:
+        return False, f"⚠️ No se puede eliminar: Hay {users_count} usuarios vinculados a esta oficina. Reasígnalos primero."
+
     office = db.query(Office).filter(Office.id == office_id).first()
     if office:
-        db.delete(office)
-        db.commit()
-        return True, "Oficina eliminada."
+        try:
+            db.delete(office)
+            db.commit()
+            return True, "✅ Oficina eliminada correctamente."
+        except Exception as e:
+            db.rollback()
+            return False, f"Error al eliminar: {e}"
+            
     return False, "Oficina no encontrada."
 
 # --- FUNCIONES DE GESTIÓN DE MENÚ ---
@@ -108,19 +122,20 @@ def finalize_week_logic(db: Session, week_id: int):
     week.is_open = False 
     db.commit()
     
-    # Exportación por defecto (Todas las oficinas)
+    # Exportación por defecto (Todas las oficinas - Consolidado)
     return export_week_to_excel(db, week_id)
 
 # --- EXPORTACIÓN CON FILTRO DE OFICINA ---
 def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     week = db.query(Week).filter(Week.id == week_id).first()
     
-    # Query Base
+    # Query Base con Eager Loading de Usuario
     query = db.query(Order).options(joinedload(Order.user)).filter(Order.week_id == week_id)
     
     # 1. FILTRO POR OFICINA
     office_name_str = "TODAS"
     if office_id is not None:
+        # Filtramos pedidos donde el usuario pertenezca a la oficina seleccionada
         query = query.join(Order.user).filter(User.office_id == office_id)
         office_obj = db.query(Office).filter(Office.id == office_id).first()
         if office_obj:
@@ -144,7 +159,7 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
 
     for order in orders:
         details = order.details 
-        # Obtenemos nombre de oficina del usuario
+        # Obtenemos nombre de oficina del usuario de forma segura
         user_office = order.user.office.name if order.user.office else "Sin Oficina"
         
         row = {
