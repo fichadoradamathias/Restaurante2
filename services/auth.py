@@ -1,32 +1,49 @@
 # services/auth.py
+import bcrypt
 from sqlalchemy.orm import Session
 from database.models import User, Office
-from passlib.context import CryptContext
 
-# Configuración de hashing (Estándar y compatible con bcrypt)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# --- FUNCIONES CORE (HASHING - VERSIÓN BCRYPT DIRECTA) ---
 
-# --- FUNCIONES CORE (HASHING) ---
+def get_password_hash(password: str) -> str:
+    """Genera un hash seguro de la contraseña usando bcrypt puro."""
+    # Convertimos la contraseña a bytes
+    pwd_bytes = password.encode('utf-8')
+    # Generamos la salt y el hash
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    # Devolvemos el hash como string para guardarlo en la DB
+    return hashed.decode('utf-8')
 
-def verify_password(plain_password, hashed_password):
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica si la contraseña coincide con el hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    """Genera un hash seguro de la contraseña."""
-    return pwd_context.hash(password)
+    try:
+        # bcrypt necesita bytes para ambos argumentos
+        pwd_bytes = plain_password.encode('utf-8')
+        # Si el hash viene de la DB como string, lo pasamos a bytes
+        hash_bytes = hashed_password.encode('utf-8')
+        
+        return bcrypt.checkpw(pwd_bytes, hash_bytes)
+    except Exception:
+        # Si el formato del hash es incorrecto o hay otro error
+        return False
 
 # --- AUTENTICACIÓN (LOGIN) ---
 
 def authenticate_user(db: Session, username: str, password: str):
     """Busca al usuario y valida su contraseña."""
     user = db.query(User).filter(User.username == username).first()
+    
     if not user:
         return None
+    
+    # Validamos la contraseña usando la función robusta
     if not verify_password(password, user.password_hash):
         return None
+        
     if not user.is_active:
         return None
+        
     return user
 
 # --- GESTIÓN DE USUARIOS (CRUD) ---
@@ -38,15 +55,16 @@ def create_user(db: Session, username, full_name, password, office_id: int = Non
     if existing_user:
         return False, f"El usuario '{username}' ya existe."
 
+    # 2. Hashear password
     hashed_password = get_password_hash(password)
     
-    # 2. Validar oficina (si se envió un ID)
+    # 3. Validar oficina (si se envió un ID)
     if office_id:
         office = db.query(Office).filter(Office.id == office_id).first()
         if not office:
             return False, "La oficina seleccionada no es válida."
 
-    # 3. Crear usuario
+    # 4. Crear usuario
     new_user = User(
         username=username,
         full_name=full_name,
@@ -92,9 +110,8 @@ def update_user_details(db: Session, user_id: int, username: str, full_name: str
 
 def reset_user_password(db: Session, user_id: int, new_password: str, actor_id: int = None):
     """
-    Resetea la contraseña.
-    NOTA: Acepta 'actor_id' para compatibilidad con la auditoría de la vista,
-    aunque no lo usemos directamente aquí para evitar dependencias circulares.
+    Resetea la contraseña usando bcrypt directo.
+    Mantenemos 'actor_id' para que la llamada desde la vista no falle.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
