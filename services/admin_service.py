@@ -57,7 +57,7 @@ def delete_menu_item(db: Session, item_id: int):
     try: db.delete(item); db.commit(); return True, "Eliminado."
     except: db.rollback(); return False, "Error."
 
-# --- SEMANAS Y CIERRE AUTOMÁTICO (LO QUE TE FALTABA) ---
+# --- SEMANAS Y CIERRE AUTOMÁTICO ---
 
 def create_week(db: Session, title: str, start_date, end_datetime):
     """Crea semana con fecha y hora de cierre exactas."""
@@ -103,6 +103,21 @@ def finalize_week_logic(db: Session, week_id: int):
     week.is_open = False 
     db.commit()
     return export_week_to_excel(db, week_id)
+
+def update_week_closed_days(db: Session, week_id: int, closed_days_list: list):
+    """Actualiza la lista de días cerrados (feriados) de una semana."""
+    week = db.query(Week).filter(Week.id == week_id).first()
+    if not week:
+        return False, "Semana no encontrada."
+    
+    try:
+        # Aseguramos que sea una lista de strings y se guarda como JSON
+        week.closed_days = closed_days_list
+        db.commit()
+        return True, "Días feriados actualizados."
+    except Exception as e:
+        db.rollback()
+        return False, f"Error: {e}"
 
 # --- EXPORTACIÓN ---
 def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
@@ -153,8 +168,8 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     df.to_excel(path, index=False) 
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
-    
-# Helpers necesarios para User Panel (añadidos para evitar otro error de importación)
+
+# --- HELPERS PARA USER PANEL (Evitan errores de importación) ---
 def check_existing_order(db: Session, user_id: int, week_id: int):
     existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
     return existing_order is not None
