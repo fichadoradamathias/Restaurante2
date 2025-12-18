@@ -157,7 +157,9 @@ def user_dashboard(db_session_maker):
                         # --- PLATO PRINCIPAL ---
                         mains = menu_items["principal"]
                         main_opts = {f"Opción {m.option_number}: {m.description}": m.id for m in mains}
-                        main_opts["❌ No comeré hoy"] = None
+                        
+                        # --- CAMBIO REALIZADO AQUÍ ---
+                        main_opts["❌ No pedido"] = None
                         
                         # Pre-selección lógica
                         saved_main_id = current_details.get(f"{current_day_code}_principal")
@@ -168,7 +170,7 @@ def user_dashboard(db_session_maker):
                             vals = list(main_opts.values())
                             default_idx = vals.index(saved_main_id)
                         elif saved_main_id is None and existing_order:
-                            # Si ya existe orden y es None, es "No comeré hoy" (ultimo index)
+                            # Si ya existe orden y es None, es la opción "No pedido" (último index)
                              default_idx = len(main_opts) - 1 
 
                         selected_main_label = st.radio(
@@ -232,7 +234,7 @@ def user_dashboard(db_session_maker):
                         # Texto dinámico según si ya pidió algo ese día
                         btn_text = "💾 Guardar / Actualizar este día"
                         if saved_main_id: 
-                            btn_text = "🔄 Actualizar Selección del Lunes" .replace("Lunes", current_day_name)
+                            btn_text = "🔄 Actualizar Selección del Lunes".replace("Lunes", current_day_name)
 
                         submitted = st.form_submit_button(btn_text, use_container_width=True, type="primary")
                         
