@@ -3,29 +3,23 @@ from sqlalchemy.orm import Session
 from database.models import Week, MenuItem, Order
 from datetime import datetime
 from services.admin_service import get_now_utc3
+import time
 
-# --- FUNCIONES DE BASE DE DATOS ---
+# --- GESTIÓN DE BASE DE DATOS ---
 
-def get_menu_items_structure(db: Session, week_id: int):
-    """
-    Obtiene TODO el menú de la semana y lo organiza en un diccionario fácil de consultar.
-    Retorna: { 'monday': {'principal': [obj...], 'side': [...], 'salad': [...]}, 'tuesday': ... }
-    """
+def get_full_week_menu(db: Session, week_id: int):
+    """Descarga todo el menú de la semana y lo estructura por día."""
     items = db.query(MenuItem).filter(MenuItem.week_id == week_id).all()
-    
-    # Estructura base
-    structure = {day: {'principal': [], 'side': [], 'salad': []} for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']}
+    menu_structure = {day: {'principal': [], 'side': [], 'salad': []} 
+                      for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']}
     
     for item in items:
-        if item.day in structure and item.type in structure[item.day]:
-            structure[item.day][item.type].append(item)
-            
-    return structure
+        if item.day in menu_structure and item.type in menu_structure[item.day]:
+            menu_structure[item.day][item.type].append(item)
+    return menu_structure
 
-def save_weekly_order(db: Session, user_id: int, week_id: int, full_details: dict):
-    """
-    Guarda o actualiza el pedido COMPLETO de la semana.
-    """
+def save_weekly_order_to_db(db: Session, user_id: int, week_id: int, collected_data: dict):
+    """Recibe la data de TODOS los días y hace un solo guardado/update."""
     try:
         existing_order = db.query(Order).filter(
             Order.user_id == user_id, 
@@ -33,18 +27,18 @@ def save_weekly_order(db: Session, user_id: int, week_id: int, full_details: dic
         ).first()
 
         if existing_order:
-            existing_order.details = full_details
+            existing_order.details = collected_data
             existing_order.status = "actualizado"
-            msg = "✅ ¡Pedido semanal actualizado correctamente!"
+            msg = "✅ Pedido semanal actualizado correctamente."
         else:
             new_order = Order(
                 user_id=user_id,
                 week_id=week_id,
                 status="confirmado",
-                details=full_details
+                details=collected_data
             )
             db.add(new_order)
-            msg = "🚀 ¡Pedido semanal enviado exitosamente!"
+            msg = "🚀 Pedido semanal creado exitosamente."
         
         db.commit()
         return True, msg
@@ -52,7 +46,7 @@ def save_weekly_order(db: Session, user_id: int, week_id: int, full_details: dic
         db.rollback()
         return False, f"Error al guardar: {e}"
 
-# --- VISTA PRINCIPAL ---
+# --- INTERFAZ DE USUARIO ---
 
 def user_dashboard(db_session_maker):
     if 'user_id' not in st.session_state:
@@ -63,7 +57,7 @@ def user_dashboard(db_session_maker):
     db: Session = db_session_maker()
 
     try:
-        # 1. OBTENER SEMANA ACTIVA
+        # 1. VALIDAR SEMANA ACTIVA
         now_utc3 = get_now_utc3()
         current_week = db.query(Week).filter(
             Week.is_open == True, 
@@ -77,18 +71,12 @@ def user_dashboard(db_session_maker):
 
         closed_days = current_week.closed_days if current_week.closed_days else []
 
-        # 2. HEADER
-        st.title(f"🍽️ Menú: {current_week.title}")
-        time_left = current_week.end_date - now_utc3
-        if time_left.days == 0 and time_left.seconds < 7200:
-            st.error(f"🔥 CIERRE INMINENTE: {time_left.seconds // 3600}h {(time_left.seconds % 3600) // 60}m")
-        else:
-            st.caption(f"⏳ Cierre en: {time_left.days} días")
-        st.divider()
-
-        # 3. CARGAR DATOS PREVIOS E INICIALIZAR ESTADO
-        # Esto es crucial: Cargamos la DB en el session_state UNA sola vez para que el usuario pueda editar
-        if "data_initialized" not in st.session_state:
+        # 2. INICIALIZAR ESTADO (Solo una vez al cargar la página)
+        # Esto asegura que tengamos las variables listas para guardar toda la semana
+        days_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+        
+        if "week_data_loaded" not in st.session_state or st.session_state.get("current_week_id") != current_week.id:
+            # Buscar si ya hay pedido guardado en DB
             existing_order = db.query(Order).filter(
                 Order.user_id == user_id, 
                 Order.week_id == current_week.id
@@ -96,181 +84,205 @@ def user_dashboard(db_session_maker):
             
             saved_details = existing_order.details if existing_order else {}
             
-            days = ["monday", "tuesday", "wednesday", "thursday", "friday"]
-            for d in days:
-                # Inicializamos las keys en session_state con lo que haya en la DB o None
-                st.session_state[f"sel_main_{d}"] = saved_details.get(f"{d}_principal")
-                st.session_state[f"sel_side_{d}"] = saved_details.get(f"{d}_side")
-                st.session_state[f"sel_salad_{d}"] = saved_details.get(f"{d}_salad")
-                st.session_state[f"sel_note_{d}"] = saved_details.get(f"{d}_note", "")
+            # Cargar en session_state (Persistencia en memoria)
+            for d in days_keys:
+                st.session_state[f"main_{d}"] = saved_details.get(f"{d}_principal", None)
+                st.session_state[f"side_{d}"] = saved_details.get(f"{d}_side", None)
+                st.session_state[f"salad_{d}"] = saved_details.get(f"{d}_salad", None)
+                st.session_state[f"note_{d}"] = saved_details.get(f"{d}_note", "")
             
-            st.session_state.data_initialized = True
+            st.session_state.week_data_loaded = True
+            st.session_state.current_week_id = current_week.id
 
-        # 4. NAVEGACIÓN ENTRE DÍAS
-        days_map = [
-            ("monday", "Lunes"), ("tuesday", "Martes"), ("wednesday", "Miércoles"),
-            ("thursday", "Jueves"), ("friday", "Viernes")
-        ]
+        # 3. HEADER
+        st.title(f"🍽️ Menú: {current_week.title}")
+        st.caption("Navega por los días, selecciona tu comida y al final presiona 'Enviar Pedido Semanal'.")
+        st.divider()
+
+        # 4. VISUALIZADOR DE ESTADO (Progreso)
+        # Muestra visualmente qué días tienen comida seleccionada
+        cols_status = st.columns(5)
+        days_labels = ["LUN", "MAR", "MIE", "JUE", "VIE"]
+        for i, d in enumerate(days_keys):
+            has_selection = st.session_state.get(f"main_{d}") is not None
+            icon = "✅" if has_selection else "⬜"
+            color = "green" if has_selection else "gray"
+            cols_status[i].markdown(f"<p style='text-align:center; color:{color};'><b>{days_labels[i]}</b><br>{icon}</p>", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # 5. NAVEGACIÓN (CARRUSEL)
+        if 'nav_index' not in st.session_state: st.session_state.nav_index = 0
         
-        if 'day_nav_index' not in st.session_state: st.session_state.day_nav_index = 0
-        # Validar límites
-        if st.session_state.day_nav_index >= len(days_map): st.session_state.day_nav_index = 0
-        if st.session_state.day_nav_index < 0: st.session_state.day_nav_index = 0
-
-        curr_code, curr_name = days_map[st.session_state.day_nav_index]
-
-        c1, c2, c3 = st.columns([1, 4, 1])
-        with c1:
-            if st.button("⬅ Ant", use_container_width=True):
-                st.session_state.day_nav_index -= 1
+        # Botones de navegación
+        c_prev, c_title, c_next = st.columns([1, 6, 1])
+        with c_prev:
+            if st.button("◀", use_container_width=True):
+                st.session_state.nav_index = max(0, st.session_state.nav_index - 1)
                 st.rerun()
-        with c2:
-            st.markdown(f"<h3 style='text-align: center; color:#FF4B4B; margin:0;'>{curr_name}</h3>", unsafe_allow_html=True)
-        with c3:
-            if st.button("Sig ➡", use_container_width=True):
-                st.session_state.day_nav_index += 1
+        
+        current_day_code = days_keys[st.session_state.nav_index]
+        day_names_full = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+        current_day_name = day_names_full[st.session_state.nav_index]
+
+        with c_title:
+            st.markdown(f"<h2 style='text-align: center; margin:0; color:#FF4B4B;'>{current_day_name}</h2>", unsafe_allow_html=True)
+        
+        with c_next:
+            if st.button("▶", use_container_width=True):
+                st.session_state.nav_index = min(4, st.session_state.nav_index + 1)
                 st.rerun()
 
-        st.markdown("###")
+        # 6. CONTENIDO DEL DÍA (Formulario dinámico)
+        full_menu = get_full_week_menu(db, current_week.id)
+        day_items = full_menu.get(current_day_code)
 
-        # 5. RENDERIZADO DEL DÍA ACTUAL
-        # Obtenemos todo el menú de una vez para no hacer queries constantes
-        full_menu = get_menu_items_structure(db, current_week.id)
-        day_menu = full_menu.get(curr_code)
-
-        # Contenedor visual del día
+        # Usamos un contenedor visual
         with st.container(border=True):
-            if curr_code in closed_days:
-                st.warning(f"⛔ {curr_name}: FERIADO / SIN SERVICIO")
-                # Limpiamos selección interna por si acaso
-                st.session_state[f"sel_main_{curr_code}"] = None
+            if current_day_code in closed_days:
+                st.error(f"⛔ {current_day_name}: FERIADO / SIN SERVICIO")
+                # Forzamos limpieza en memoria si es feriado
+                st.session_state[f"main_{current_day_code}"] = None
             
-            elif not day_menu['principal']:
-                st.info("⚠️ Menú no cargado para este día.")
+            elif not day_items['principal']:
+                st.warning("⚠️ El menú de este día aún no ha sido cargado por el administrador.")
             
             else:
                 # --- PLATO PRINCIPAL ---
-                mains = day_menu['principal']
-                # Creamos mapa {Descripción: ID}
-                main_map = {f"Opción {m.option_number}: {m.description}": m.id for m in mains}
-                main_map["❌ No pedido"] = None # Opción nula
-                
-                # Recuperar valor actual del estado
-                current_val = st.session_state.get(f"sel_main_{curr_code}")
-                
-                # Calcular índice
-                idx = len(main_map) - 1 # Por defecto: No pedido
-                if current_val in main_map.values():
-                    idx = list(main_map.values()).index(current_val)
+                mains = day_items['principal']
+                # Mapeo: Texto -> ID
+                main_options = {f"Opción {m.option_number}: {m.description}": m.id for m in mains}
+                main_options["❌ No pedido"] = None # Opción nula explícita
 
-                # WIDGET DIRECTO (Sin Form) - Se guarda solo en session_state al cambiar
+                # Recuperar valor actual de la memoria
+                current_val_main = st.session_state.get(f"main_{current_day_code}")
+                
+                # Calcular índice para el radio button
+                try:
+                    # Si el valor actual está en las opciones, buscar su índice
+                    if current_val_main in main_options.values():
+                        idx_main = list(main_options.values()).index(current_val_main)
+                    else:
+                        # Por defecto la última opción ("No pedido")
+                        idx_main = len(main_options) - 1
+                except:
+                    idx_main = len(main_options) - 1
+
+                # WIDGET: Al cambiar, Streamlit actualiza st.session_state[key] automáticamente
+                # Usamos una key única por día para que persista
                 selected_label = st.radio(
-                    f"🍛 Plato Principal ({curr_name})",
-                    options=list(main_map.keys()),
-                    index=idx,
-                    key=f"radio_main_{curr_code}" # Key única para el widget
+                    f"Plato Principal del {current_day_name}:",
+                    options=list(main_options.keys()),
+                    index=idx_main,
+                    key=f"widget_main_{current_day_code}" 
                 )
-                # Actualizamos manualmente el estado que usaremos para guardar
-                st.session_state[f"sel_main_{curr_code}"] = main_map[selected_label]
-
-                st.markdown("---")
-
-                # --- EXTRAS ---
-                c_side, c_salad = st.columns(2)
                 
-                # Guarnición
-                with c_side:
-                    sides = day_menu['side']
-                    side_map = {s.description: s.id for s in sides}
-                    side_map["Ninguno"] = None
-                    
-                    cur_side = st.session_state.get(f"sel_side_{curr_code}")
-                    s_idx = list(side_map.values()).index(cur_side) if cur_side in side_map.values() else len(side_map)-1
-                    
-                    sel_side_lbl = st.selectbox(f"🍟 Guarnición", list(side_map.keys()), index=s_idx, key=f"sb_side_{curr_code}")
-                    st.session_state[f"sel_side_{curr_code}"] = side_map[sel_side_lbl]
+                # ACTUALIZAR MEMORIA MANUALMENTE (Para asegurar sincronización)
+                st.session_state[f"main_{current_day_code}"] = main_options[selected_label]
 
-                # Ensalada
-                with c_salad:
-                    salads = day_menu['salad']
-                    salad_map = {s.description: s.id for s in salads}
-                    salad_map["Ninguna"] = None
+                # Mostrar extras solo si seleccionó comida
+                if st.session_state[f"main_{current_day_code}"] is not None:
+                    st.divider()
+                    col_s1, col_s2 = st.columns(2)
                     
-                    cur_salad = st.session_state.get(f"sel_salad_{curr_code}")
-                    sl_idx = list(salad_map.values()).index(cur_salad) if cur_salad in salad_map.values() else len(salad_map)-1
+                    # --- GUARNICIÓN ---
+                    with col_s1:
+                        sides = day_items['side']
+                        side_opts = {s.description: s.id for s in sides}
+                        side_opts["Ninguno"] = None
+                        
+                        curr_side = st.session_state.get(f"side_{current_day_code}")
+                        # Buscar índice
+                        idx_side = list(side_opts.values()).index(curr_side) if curr_side in side_opts.values() else len(side_opts)-1
+                        
+                        sel_side_lbl = st.selectbox(
+                            "Guarnición", 
+                            list(side_opts.keys()), 
+                            index=idx_side,
+                            key=f"widget_side_{current_day_code}"
+                        )
+                        st.session_state[f"side_{current_day_code}"] = side_opts[sel_side_lbl]
+
+                    # --- ENSALADA ---
+                    with col_s2:
+                        salads = day_items['salad']
+                        salad_opts = {s.description: s.id for s in salads}
+                        salad_opts["Ninguna"] = None
+                        
+                        curr_salad = st.session_state.get(f"salad_{current_day_code}")
+                        idx_salad = list(salad_opts.values()).index(curr_salad) if curr_salad in salad_opts.values() else len(salad_opts)-1
+                        
+                        sel_salad_lbl = st.selectbox(
+                            "Ensalada", 
+                            list(salad_opts.keys()), 
+                            index=idx_salad,
+                            key=f"widget_salad_{current_day_code}"
+                        )
+                        st.session_state[f"salad_{current_day_code}"] = salad_opts[sel_salad_lbl]
                     
-                    sel_salad_lbl = st.selectbox(f"🥗 Ensalada", list(salad_map.keys()), index=sl_idx, key=f"sb_salad_{curr_code}")
-                    st.session_state[f"sel_salad_{curr_code}"] = salad_map[sel_salad_lbl]
+                    # --- NOTA ---
+                    st.markdown("###")
+                    note_val = st.text_area(
+                        "Nota especial (opcional):", 
+                        value=st.session_state.get(f"note_{current_day_code}", ""),
+                        key=f"widget_note_{current_day_code}",
+                        height=70
+                    )
+                    st.session_state[f"note_{current_day_code}"] = note_val
+                
+                else:
+                    # Si seleccionó "No pedido", limpiamos los extras en memoria
+                    st.session_state[f"side_{current_day_code}"] = None
+                    st.session_state[f"salad_{current_day_code}"] = None
+                    st.info("Has seleccionado 'No pedido' para este día.")
 
-                # Nota
-                st.markdown("###")
-                note_val = st.text_area("📝 Nota:", value=st.session_state.get(f"sel_note_{curr_code}", ""), key=f"txt_note_{curr_code}")
-                st.session_state[f"sel_note_{curr_code}"] = note_val
 
+        # 7. BOTÓN DE ENVÍO FINAL (GLOBAL)
         st.markdown("###")
-
-        # 6. BOTÓN DE ENVÍO GLOBAL (Fuera del contenedor del día)
-        st.divider()
-        st.caption("Revisa tus selecciones navegando por los días. Cuando estés listo, envía todo el pedido.")
+        st.markdown("---")
         
-        # Botón grande y llamativo
-        btn_col1, btn_col2 = st.columns([1, 2])
-        with btn_col2:
-            submitted = st.button("💾 ENVIAR PEDIDO SEMANAL COMPLETO", type="primary", use_container_width=True)
+        # Botón grande
+        submit_col1, submit_col2, submit_col3 = st.columns([1, 3, 1])
+        with submit_col2:
+            btn_submit = st.button(
+                "💾 CONFIRMAR Y ENVIAR PEDIDO SEMANAL", 
+                type="primary", 
+                use_container_width=True
+            )
 
-        if submitted:
-            # Recopilar datos de TODOS los días desde session_state
-            full_details = {}
-            days_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"]
-            
-            has_at_least_one = False
+        if btn_submit:
+            # RECOPILAR DATOS DE LA MEMORIA (SESSION STATE)
+            final_data_payload = {}
+            count_meals = 0
             
             for d in days_keys:
-                main_id = st.session_state.get(f"sel_main_{d}")
-                side_id = st.session_state.get(f"sel_side_{d}")
-                salad_id = st.session_state.get(f"sel_salad_{d}")
-                note = st.session_state.get(f"sel_note_{d}", "")
+                m_id = st.session_state.get(f"main_{d}")
                 
-                # Construir objeto
-                full_details[f"{d}_principal"] = main_id
+                final_data_payload[f"{d}_principal"] = m_id
                 
-                # Lógica: Si hay plato principal, guardamos extras. Si es "No pedido" (None), extras son None.
-                if main_id is not None:
-                    full_details[f"{d}_side"] = side_id
-                    full_details[f"{d}_salad"] = salad_id
-                    full_details[f"{d}_note"] = note
-                    has_at_least_one = True
+                if m_id is not None:
+                    final_data_payload[f"{d}_side"] = st.session_state.get(f"side_{d}")
+                    final_data_payload[f"{d}_salad"] = st.session_state.get(f"salad_{d}")
+                    final_data_payload[f"{d}_note"] = st.session_state.get(f"note_{d}", "")
+                    count_meals += 1
                 else:
-                    full_details[f"{d}_side"] = None
-                    full_details[f"{d}_salad"] = None
-                    full_details[f"{d}_note"] = ""
-
-            if not has_at_least_one:
-                st.warning("⚠️ No has seleccionado ningún plato para ningún día. Selecciona al menos uno.")
+                    final_data_payload[f"{d}_side"] = None
+                    final_data_payload[f"{d}_salad"] = None
+                    final_data_payload[f"{d}_note"] = ""
+            
+            if count_meals == 0:
+                st.warning("⚠️ No has seleccionado ningún plato para ningún día. Por favor selecciona al menos uno.")
             else:
-                success, msg = save_weekly_order(db, user_id, current_week.id, full_details)
+                success, msg = save_weekly_order_to_db(db, user_id, current_week.id, final_data_payload)
                 if success:
                     st.balloons()
                     st.success(msg)
-                    # Forzar recarga para asegurar que se muestre el estado actualizado
-                    import time
-                    time.sleep(1.5)
+                    time.sleep(2)
                     st.rerun()
                 else:
                     st.error(msg)
-                    
-        # Visualizador rápido de estado (Resumen)
-        with st.expander("👀 Ver Resumen de mi Selección actual"):
-            summary_cols = st.columns(5)
-            d_codes = ["monday", "tuesday", "wednesday", "thursday", "friday"]
-            d_shorts = ["LUN", "MAR", "MIE", "JUE", "VIE"]
-            
-            for i, d in enumerate(d_codes):
-                is_selected = st.session_state.get(f"sel_main_{d}") is not None
-                icon = "✅" if is_selected else "❌"
-                summary_cols[i].markdown(f"**{d_shorts[i]}**<br>{icon}", unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"Error en dashboard: {e}")
+        st.error(f"Ocurrió un error inesperado: {e}")
     finally:
         db.close()
