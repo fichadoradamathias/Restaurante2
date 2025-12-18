@@ -74,10 +74,12 @@ def user_dashboard(db_session_maker):
     # --- SI NO HAY SEMANA DISPONIBLE ---
     if not current_week:
         st.info(f"🚫 No hay semanas habilitadas para pedidos en este momento.")
-        # Mostramos la hora del servidor para que el usuario entienda por qué
         st.caption(f"Hora actual del sistema (UTC-3): {now_utc3.strftime('%d/%m/%Y %H:%M')}")
         db.close()
         return
+
+    # Recuperar lista de días cerrados (feriados)
+    closed_days = current_week.closed_days if current_week.closed_days else []
 
     # --- 2. CONTADOR REGRESIVO ---
     st.title(f"🍽️ Menú: {current_week.title}")
@@ -91,7 +93,7 @@ def user_dashboard(db_session_maker):
 
     time_str = f"{days} días, {hours} horas y {minutes} minutos"
     
-    # Lógica Visual: Alerta Roja si falta poco (menos de 2 horas y 0 días)
+    # Alerta visual: Rojo si falta poco
     if days == 0 and hours < 2:
         st.error(f"🔥 ¡Atención! Cierre inminente. Quedan: {hours}h {minutes}m")
     else:
@@ -127,32 +129,27 @@ def user_dashboard(db_session_maker):
         for day_code, day_name in day_labels.items():
             st.subheader(f"📅 {day_name}")
             
+            # --- VERIFICACIÓN DE FERIADO ---
+            if day_code in closed_days:
+                st.error(f"🚫 {day_name.upper()}: SIN SERVICIO / FERIADO")
+                st.caption("No hay menú disponible para este día.")
+                # Forzamos valores nulos
+                user_selections[f"{day_code}_principal"] = None
+                user_selections[f"{day_code}_side"] = None
+                user_selections[f"{day_code}_salad"] = None
+                st.divider()
+                continue # Saltamos al siguiente día
+            
             # --- PLATO PRINCIPAL ---
             mains = menu_data.get(day_code, {}).get("principal", [])
-            # Creamos un diccionario {Texto a mostrar : ID}
             main_opts = {f"Opción {m.option_number}: {m.description}": m.id for m in mains}
             main_opts["❌ No comeré hoy"] = None
             
-            # Lógica para pre-seleccionar lo que el usuario ya había pedido
+            # Lógica para pre-seleccionar
             prev_main = current_details.get(f"{day_code}_principal")
-            idx_main = 0 # Default: primera opción
-            
-            # Buscamos el índice correspondiente al valor guardado
-            if prev_main:
-                # Si el valor guardado está en las opciones actuales
-                if prev_main in main_opts.values():
-                    # Truco para obtener el índice basado en el valor
-                    values_list = list(main_opts.values())
-                    idx_main = values_list.index(prev_main)
-                else:
-                    # Si el plato ya no existe, volvemos al default
-                    idx_main = 0 
-            else:
-                # Si prev_main es None o no existe, seleccionamos la opción "No comeré hoy" (la última) si queremos que sea default,
-                # o la primera opción si queremos incentivar comer.
-                # Aquí dejamos logicamente la primera opción del menú como default visual, o la ultima si queremos 'No comer'.
-                # Generalmente Streamlit selecciona el index 0.
-                pass
+            idx_main = 0 
+            if prev_main in main_opts.values():
+                idx_main = list(main_opts.values()).index(prev_main)
 
             sel_main_label = st.radio(
                 f"Plato Principal ({day_name})", 
@@ -163,64 +160,43 @@ def user_dashboard(db_session_maker):
             )
             user_selections[f"{day_code}_principal"] = main_opts[sel_main_label]
 
-            # --- ACOMPAÑAMIENTOS Y ENSALADAS ---
-            # Solo mostramos selects si el usuario eligió un plato (ID no es None)
+            # --- EXTRAS (Solo si come) ---
             if user_selections[f"{day_code}_principal"] is not None:
                 c1, c2 = st.columns(2)
                 
-                # Side (Guarnición)
+                # Side
                 sides = menu_data.get(day_code, {}).get("side", [])
                 if sides:
                     side_opts = {f"{s.description}": s.id for s in sides}
                     side_opts["Ninguno"] = None
-                    
-                    prev_side = current_details.get(f"{day_code}_side")
-                    # Index logic
-                    idx_side = 0
-                    if prev_side in side_opts.values():
-                        idx_side = list(side_opts.values()).index(prev_side)
-                    else:
-                        idx_side = len(side_opts) - 1 # Default a Ninguno
+                    prev = current_details.get(f"{day_code}_side")
+                    idx = list(side_opts.values()).index(prev) if prev in side_opts.values() else len(side_opts)-1
+                    sel = c1.selectbox(f"Acompañamiento ({day_name})", list(side_opts.keys()), index=idx)
+                    user_selections[f"{day_code}_side"] = side_opts[sel]
+                else: user_selections[f"{day_code}_side"] = None
 
-                    sel_side = c1.selectbox(f"Acompañamiento ({day_name})", list(side_opts.keys()), index=idx_side)
-                    user_selections[f"{day_code}_side"] = side_opts[sel_side]
-                else:
-                    user_selections[f"{day_code}_side"] = None
-
-                # Salad (Ensalada)
+                # Salad
                 salads = menu_data.get(day_code, {}).get("salad", [])
                 if salads:
                     salad_opts = {f"{s.description}": s.id for s in salads}
                     salad_opts["Ninguna"] = None
-                    
-                    prev_salad = current_details.get(f"{day_code}_salad")
-                    # Index logic
-                    idx_salad = 0
-                    if prev_salad in salad_opts.values():
-                        idx_salad = list(salad_opts.values()).index(prev_salad)
-                    else:
-                        idx_salad = len(salad_opts) - 1 # Default a Ninguna
-                    
-                    sel_salad = c2.selectbox(f"Ensalada ({day_name})", list(salad_opts.keys()), index=idx_salad)
-                    user_selections[f"{day_code}_salad"] = salad_opts[sel_salad]
-                else:
-                    user_selections[f"{day_code}_salad"] = None
+                    prev = current_details.get(f"{day_code}_salad")
+                    idx = list(salad_opts.values()).index(prev) if prev in salad_opts.values() else len(salad_opts)-1
+                    sel = c2.selectbox(f"Ensalada ({day_name})", list(salad_opts.keys()), index=idx)
+                    user_selections[f"{day_code}_salad"] = salad_opts[sel]
+                else: user_selections[f"{day_code}_salad"] = None
             else:
-                # Si eligió "No comeré hoy", forzamos None en los extras
                 user_selections[f"{day_code}_side"] = None
                 user_selections[f"{day_code}_salad"] = None
             
             st.divider()
 
-        # Botón de envío
         submitted = st.form_submit_button("💾 Enviar Pedido Completo", type="primary")
-        
         if submitted:
             success, msg = save_order_logic(db, user_id, current_week.id, user_selections)
             if success:
                 st.success(msg)
                 st.balloons()
-                # Recargar para mostrar estado actualizado
                 st.rerun()
             else:
                 st.error(msg)
