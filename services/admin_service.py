@@ -57,7 +57,7 @@ def delete_menu_item(db: Session, item_id: int):
     try: db.delete(item); db.commit(); return True, "Eliminado."
     except: db.rollback(); return False, "Error."
 
-# --- SEMANAS Y CIERRE AUTOMÁTICO ---
+# --- SEMANAS Y CIERRE AUTOMÁTICO (LO QUE TE FALTABA) ---
 
 def create_week(db: Session, title: str, start_date, end_datetime):
     """Crea semana con fecha y hora de cierre exactas."""
@@ -153,3 +153,16 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     df.to_excel(path, index=False) 
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
+    
+# Helpers necesarios para User Panel (añadidos para evitar otro error de importación)
+def check_existing_order(db: Session, user_id: int, week_id: int):
+    existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
+    return existing_order is not None
+
+def get_menu_options_for_week(db: Session, week_id: int):
+    menu_items = db.query(MenuItem).filter(MenuItem.week_id == week_id).order_by(MenuItem.day, MenuItem.type, MenuItem.option_number).all()
+    menu = {"Lunes": {"principal": [], "side": [], "salad": []}, "Martes": {"principal": [], "side": [], "salad": []}, "Miércoles": {"principal": [], "side": [], "salad": []}, "Jueves": {"principal": [], "side": [], "salad": []}, "Viernes": {"principal": [], "side": [], "salad": []}}
+    for item in menu_items:
+        if item.day in menu and item.type in menu[item.day]:
+            menu[item.day][item.type].append((item.id, item.description, item.option_number))
+    return menu
