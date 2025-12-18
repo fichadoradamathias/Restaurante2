@@ -31,20 +31,24 @@ class User(Base):
 
     orders = relationship("Order", back_populates="user")
 
-# --- SEMANAS (ACTUALIZADO) ---
+# --- SEMANAS ---
 class Week(Base):
     __tablename__ = "weeks"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False, unique=True)
     start_date = Column(Date, nullable=False)
     
-    # CAMBIO REALIZADO: Ahora es DateTime para soportar hora de cierre
+    # DateTime para soportar hora exacta de cierre
     end_date = Column(DateTime, nullable=False) 
     
     is_open = Column(Boolean, default=True)
     is_finalized = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
+    # NUEVO: Lista de días cerrados (ej: ["thursday", "friday"])
+    closed_days = Column(JSON, default=[]) 
+
+    # Relaciones
     menu_items = relationship("MenuItem", back_populates="week", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="week")
     export_logs = relationship("ExportLog", back_populates="week")
