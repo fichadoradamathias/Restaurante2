@@ -5,7 +5,7 @@ from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
 
-# --- NUEVO: MODELO DE OFICINA ---
+# --- MODELO DE OFICINA ---
 class Office(Base):
     __tablename__ = "offices"
     id = Column(Integer, primary_key=True, index=True)
@@ -14,7 +14,7 @@ class Office(Base):
     # Relación inversa
     users = relationship("User", back_populates="office")
 
-# --- USUARIOS (Modificado) ---
+# --- USUARIOS ---
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -25,19 +25,22 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-    # NUEVO: Vinculación con Oficina
-    office_id = Column(Integer, ForeignKey("offices.id"), nullable=True) # Nullable true para no romper usuarios viejos al inicio
+    # Vinculación con Oficina
+    office_id = Column(Integer, ForeignKey("offices.id"), nullable=True)
     office = relationship("Office", back_populates="users")
 
     orders = relationship("Order", back_populates="user")
 
-# --- SEMANAS ---
+# --- SEMANAS (ACTUALIZADO) ---
 class Week(Base):
     __tablename__ = "weeks"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False, unique=True)
     start_date = Column(Date, nullable=False)
-    end_date = Column(Date, nullable=False)
+    
+    # CAMBIO REALIZADO: Ahora es DateTime para soportar hora de cierre
+    end_date = Column(DateTime, nullable=False) 
+    
     is_open = Column(Boolean, default=True)
     is_finalized = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
