@@ -21,7 +21,7 @@ def create_log_entry(db: Session, actor_id: int, target_username: str, action: s
     db.commit()
     return True
 
-# --- OFICINAS ---
+# --- GESTIÓN DE OFICINAS ---
 def create_office(db: Session, name: str):
     name = name.strip()
     if not name: return False, "El nombre no puede estar vacío."
@@ -43,7 +43,24 @@ def delete_office(db: Session, office_id: int):
         except Exception as e: db.rollback(); return False, f"Error: {e}"
     return False, "Oficina no encontrada."
 
-# --- MENÚ ---
+# --- GESTIÓN DE MENÚ ---
+def create_menu_item(db: Session, week_id: int, day: str, type: str, option_number: int, description: str):
+    """Crea un nuevo plato en el menú."""
+    new_item = MenuItem(
+        week_id=week_id,
+        day=day,
+        type=type,
+        option_number=option_number,
+        description=description
+    )
+    db.add(new_item)
+    try:
+        db.commit()
+        return True, "Plato agregado exitosamente."
+    except Exception as e:
+        db.rollback()
+        return False, f"Error al agregar plato: {e}"
+
 def update_menu_item(db: Session, item_id: int, new_desc: str, new_opt: int):
     item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
     if not item: return False, "Ítem no encontrado."
@@ -57,7 +74,7 @@ def delete_menu_item(db: Session, item_id: int):
     try: db.delete(item); db.commit(); return True, "Eliminado."
     except: db.rollback(); return False, "Error."
 
-# --- SEMANAS Y CIERRE AUTOMÁTICO ---
+# --- GESTIÓN DE SEMANAS Y LOGICA DE TIEMPO ---
 
 def create_week(db: Session, title: str, start_date, end_datetime):
     """Crea semana con fecha y hora de cierre exactas."""
@@ -70,6 +87,21 @@ def create_week(db: Session, title: str, start_date, end_datetime):
     db.commit()
     db.refresh(new_week)
     return new_week
+
+def update_week_closed_days(db: Session, week_id: int, closed_days_list: list):
+    """Actualiza la lista de días cerrados (feriados) de una semana."""
+    week = db.query(Week).filter(Week.id == week_id).first()
+    if not week:
+        return False, "Semana no encontrada."
+    
+    try:
+        # Aseguramos que sea una lista de strings y se guarda como JSON
+        week.closed_days = closed_days_list
+        db.commit()
+        return True, "Días feriados actualizados."
+    except Exception as e:
+        db.rollback()
+        return False, f"Error: {e}"
 
 def check_and_auto_close_weeks(db: Session):
     """Revisa y cierra semanas vencidas (Lazy Check)."""
@@ -103,21 +135,6 @@ def finalize_week_logic(db: Session, week_id: int):
     week.is_open = False 
     db.commit()
     return export_week_to_excel(db, week_id)
-
-def update_week_closed_days(db: Session, week_id: int, closed_days_list: list):
-    """Actualiza la lista de días cerrados (feriados) de una semana."""
-    week = db.query(Week).filter(Week.id == week_id).first()
-    if not week:
-        return False, "Semana no encontrada."
-    
-    try:
-        # Aseguramos que sea una lista de strings y se guarda como JSON
-        week.closed_days = closed_days_list
-        db.commit()
-        return True, "Días feriados actualizados."
-    except Exception as e:
-        db.rollback()
-        return False, f"Error: {e}"
 
 # --- EXPORTACIÓN ---
 def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
@@ -169,7 +186,7 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
 
-# --- HELPERS PARA USER PANEL (Evitan errores de importación) ---
+# --- HELPERS (Legacy/User Panel) ---
 def check_existing_order(db: Session, user_id: int, week_id: int):
     existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
     return existing_order is not None
