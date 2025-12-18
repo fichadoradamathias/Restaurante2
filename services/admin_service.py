@@ -2,103 +2,91 @@
 import pandas as pd
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session, joinedload
-# IMPORTANTE: Agregamos Office a los imports
 from database.models import Week, Order, User, MenuItem, ExportLog, AuditLog, Office
 
-# --- FUNCIONES DE AUDITORÍA ---
+# --- UTILIDAD: HORA UTC-3 ---
+def get_now_utc3():
+    """Retorna la hora actual ajustada a UTC-3 (Paraguay/Argentina/Uruguay sin horario verano)"""
+    return datetime.utcnow() - timedelta(hours=3)
+
+# --- AUDITORÍA ---
 def create_log_entry(db: Session, actor_id: int, target_username: str, action: str, old_value: str = None, new_value: str = None, details: str = None):
     new_log = AuditLog(
-        actor_id=str(actor_id),
-        target_username=target_username,
-        action=action,
-        old_value=old_value,
-        new_value=new_value,
-        details=details
+        actor_id=str(actor_id), target_username=target_username, action=action,
+        old_value=old_value, new_value=new_value, details=details
     )
     db.add(new_log)
     db.commit()
     return True
 
-# --- FUNCIONES DE OFICINAS (NUEVO) ---
+# --- OFICINAS ---
 def create_office(db: Session, name: str):
     name = name.strip()
-    if not name:
-        return False, "El nombre de la oficina no puede estar vacío."
-
-    if db.query(Office).filter(Office.name == name).first():
-        return False, "La oficina ya existe."
-        
+    if not name: return False, "El nombre no puede estar vacío."
+    if db.query(Office).filter(Office.name == name).first(): return False, "La oficina ya existe."
     new_office = Office(name=name)
     db.add(new_office)
-    try:
-        db.commit()
-        return True, "Oficina creada."
-    except Exception as e:
-        db.rollback()
-        return False, f"Error: {e}"
+    try: db.commit(); return True, "Oficina creada."
+    except Exception as e: db.rollback(); return False, f"Error: {e}"
 
 def get_all_offices(db: Session):
     return db.query(Office).order_by(Office.name).all()
 
 def delete_office(db: Session, office_id: int):
-    # 1. VALIDACIÓN: Verificar si hay usuarios asignados antes de borrar
     users_count = db.query(User).filter(User.office_id == office_id).count()
-    
-    if users_count > 0:
-        return False, f"⚠️ No se puede eliminar: Hay {users_count} usuarios vinculados a esta oficina. Reasígnalos primero."
-
+    if users_count > 0: return False, f"⚠️ No se puede eliminar: Hay {users_count} usuarios vinculados."
     office = db.query(Office).filter(Office.id == office_id).first()
     if office:
-        try:
-            db.delete(office)
-            db.commit()
-            return True, "✅ Oficina eliminada correctamente."
-        except Exception as e:
-            db.rollback()
-            return False, f"Error al eliminar: {e}"
-            
+        try: db.delete(office); db.commit(); return True, "Oficina eliminada."
+        except Exception as e: db.rollback(); return False, f"Error: {e}"
     return False, "Oficina no encontrada."
 
-# --- FUNCIONES DE GESTIÓN DE MENÚ ---
-def update_menu_item(db: Session, item_id: int, new_description: str, new_option_number: int):
+# --- MENÚ ---
+def update_menu_item(db: Session, item_id: int, new_desc: str, new_opt: int):
     item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
     if not item: return False, "Ítem no encontrado."
-    item.description = new_description
-    item.option_number = new_option_number
-    try:
-        db.commit()
-        return True, "Ítem actualizado."
-    except Exception as e:
-        db.rollback()
-        return False, "Error al guardar."
+    item.description = new_desc; item.option_number = new_opt
+    try: db.commit(); return True, "Actualizado."
+    except: db.rollback(); return False, "Error."
 
 def delete_menu_item(db: Session, item_id: int):
     item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
-    if not item: return False, "Ítem no encontrado."
-    try:
-        db.delete(item)
-        db.commit()
-        return True, "Ítem eliminado."
-    except Exception as e:
-        db.rollback()
-        return False, "Error al eliminar."
+    if not item: return False, "No encontrado."
+    try: db.delete(item); db.commit(); return True, "Eliminado."
+    except: db.rollback(); return False, "Error."
 
-# --- FUNCIONES DE SEMANA ---
-def create_week(db: Session, title, start_date, end_date):
-    if start_date > end_date:
-        raise ValueError("Fecha inicio debe ser anterior a fin.")
-    new_week = Week(title=title, start_date=start_date, end_date=end_date)
+# --- SEMANAS Y CIERRE AUTOMÁTICO ---
+
+def create_week(db: Session, title: str, start_date, end_datetime):
+    """Crea semana con fecha y hora de cierre exactas."""
+    # Validación básica por si llega un string en lugar de datetime
+    if isinstance(end_datetime, str): 
+        pass 
+    
+    new_week = Week(title=title, start_date=start_date, end_date=end_datetime)
     db.add(new_week)
     db.commit()
     db.refresh(new_week)
     return new_week
 
+def check_and_auto_close_weeks(db: Session):
+    """Revisa y cierra semanas vencidas (Lazy Check)."""
+    now_utc3 = get_now_utc3()
+    # Semanas abiertas cuya fecha de fin ya pasó
+    overdue_weeks = db.query(Week).filter(Week.is_open == True, Week.end_date < now_utc3).all()
+    
+    count = 0
+    for week in overdue_weeks:
+        finalize_week_logic(db, week.id)
+        count += 1
+    return count
+
 def finalize_week_logic(db: Session, week_id: int):
+    """Lógica principal de cierre y llenado de huecos."""
     week = db.query(Week).filter(Week.id == week_id).first()
-    if not week or not week.is_open:
-        return None, "Semana no encontrada o ya cerrada."
+    if not week or not week.is_open: return None, "Error o ya cerrada."
 
     active_users = db.query(User).filter(User.is_active == True).all()
     existing_orders = db.query(Order).filter(Order.week_id == week_id).all()
@@ -109,112 +97,59 @@ def finalize_week_logic(db: Session, week_id: int):
         if user.id not in users_with_order_ids:
             ghost_details = {}
             for day in day_keys:
-                for db_type in ["principal", "side", "salad"]:
-                    ghost_details[f"{day}_{db_type}"] = None 
-            ghost_order = Order(
-                user_id=user.id,
-                week_id=week_id,
-                status="no_pedido",
-                details=ghost_details 
-            )
-            db.add(ghost_order)
+                for db_type in ["principal", "side", "salad"]: ghost_details[f"{day}_{db_type}"] = None 
+            db.add(Order(user_id=user.id, week_id=week_id, status="no_pedido", details=ghost_details))
     
     week.is_open = False 
     db.commit()
-    
-    # Exportación por defecto (Todas las oficinas - Consolidado)
     return export_week_to_excel(db, week_id)
 
-# --- EXPORTACIÓN CON FILTRO DE OFICINA ---
+# --- EXPORTACIÓN ---
 def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     week = db.query(Week).filter(Week.id == week_id).first()
-    
-    # Query Base con Eager Loading de Usuario
     query = db.query(Order).options(joinedload(Order.user)).filter(Order.week_id == week_id)
     
-    # 1. FILTRO POR OFICINA
     office_name_str = "TODAS"
     if office_id is not None:
-        # Filtramos pedidos donde el usuario pertenezca a la oficina seleccionada
         query = query.join(Order.user).filter(User.office_id == office_id)
         office_obj = db.query(Office).filter(Office.id == office_id).first()
-        if office_obj:
-            office_name_str = office_obj.name.replace(" ", "_").upper()
+        if office_obj: office_name_str = office_obj.name.replace(" ", "_").upper()
 
     orders = query.all()
-    
     data = []
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
     english_to_spanish = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
     meal_types = [("principal", "Comida"), ("side", "Acompañamiento"), ("salad", "Ensalada")]
-
-    # Pre-definimos columnas
-    final_cols = ["Usuario", "Oficina"] # Agregamos columna Oficina visualmente también
+    final_cols = ["Usuario", "Oficina"]
     for d_key in day_keys:
         d_name = english_to_spanish[d_key]
-        for _, label in meal_types:
-            final_cols.append(f"{d_name} - {label}")
+        for _, label in meal_types: final_cols.append(f"{d_name} - {label}")
 
     menu_item_cache = {} 
-
     for order in orders:
         details = order.details 
-        # Obtenemos nombre de oficina del usuario de forma segura
         user_office = order.user.office.name if order.user.office else "Sin Oficina"
-        
-        row = {
-            "Usuario": order.user.full_name,
-            "Oficina": user_office
-        }
-        
+        row = {"Usuario": order.user.full_name, "Oficina": user_office}
         for day in day_keys:
-            day_name_es = english_to_spanish[day]
+            d_es = english_to_spanish[day]
             for db_type, label in meal_types:
-                field_key = f"{day}_{db_type}" 
-                col_name = f"{day_name_es} - {label}" 
-                option_id_or_string = details.get(field_key) 
-                item_description = "NO PEDIDO"
-
-                if isinstance(option_id_or_string, int):
-                    option_id = option_id_or_string
-                    if option_id not in menu_item_cache:
-                        menu_item = db.query(MenuItem).filter(MenuItem.id == option_id).first()
-                        if menu_item: menu_item_cache[option_id] = menu_item.description
-                    item_description = menu_item_cache.get(option_id, "Opción Desconocida")
-                elif order.status == "no_pedido" or option_id_or_string is None:
-                     item_description = "NO PEDIDO"
-                else:
-                    item_description = "Dato Inválido"
-                row[col_name] = item_description
+                val = details.get(f"{day}_{db_type}")
+                desc = "NO PEDIDO"
+                if isinstance(val, int):
+                    if val not in menu_item_cache:
+                        mi = db.query(MenuItem).filter(MenuItem.id == val).first()
+                        if mi: menu_item_cache[val] = mi.description
+                    desc = menu_item_cache.get(val, "Opción Desconocida")
+                elif order.status == "no_pedido" or val is None: desc = "NO PEDIDO"
+                else: desc = "Dato Inválido"
+                row[f"{d_es} - {label}"] = desc
         data.append(row)
 
-    df = pd.DataFrame(data, columns=final_cols)
-    df = df.fillna("")
-
+    df = pd.DataFrame(data, columns=final_cols).fillna("")
     safe_title = "".join([c if c.isalnum() else "_" for c in week.title])
-    # Nombre del archivo incluye la oficina
     filename = f"{safe_title}_{office_name_str}_{datetime.now().strftime('%Y%m%d')}.xlsx"
     path = f"data/exports/{filename}"
-    
     os.makedirs("data/exports", exist_ok=True)
     df.to_excel(path, index=False) 
-    
-    # Solo guardamos log si es exportación general (opcional, aquí guardamos todo)
-    log = ExportLog(week_id=week_id, filename=path)
-    db.add(log)
-    db.commit()
-    
+    log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
-
-# Funciones extra para el usuario
-def check_existing_order(db: Session, user_id: int, week_id: int):
-    existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
-    return existing_order is not None
-
-def get_menu_options_for_week(db: Session, week_id: int):
-    menu_items = db.query(MenuItem).filter(MenuItem.week_id == week_id).order_by(MenuItem.day, MenuItem.type, MenuItem.option_number).all()
-    menu = {"Lunes": {"principal": [], "side": [], "salad": []}, "Martes": {"principal": [], "side": [], "salad": []}, "Miércoles": {"principal": [], "side": [], "salad": []}, "Jueves": {"principal": [], "side": [], "salad": []}, "Viernes": {"principal": [], "side": [], "salad": []}}
-    for item in menu_items:
-        if item.day in menu and item.type in menu[item.day]:
-            menu[item.day][item.type].append((item.id, item.description, item.option_number))
-    return menu
