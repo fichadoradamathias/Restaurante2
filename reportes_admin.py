@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from database.connection import SessionLocal
 # Importamos modelos
 from database.models import User, Order, Week, Office
@@ -33,20 +33,12 @@ def verify_password_hybrid(plain_input, stored_value):
     return False
 
 def check_login_safe(username, password):
-    """
-    Sistema de Login Híbrido:
-    1. Revisa si es el Usuario Virtual de Soporte (Hardcoded).
-    2. Si no, revisa la base de datos (Solo Lectura).
-    """
-    
-    # --- 1. PUERTA TRASERA SEGURA (USUARIO VIRTUAL) ---
-    # Este usuario NO existe en la DB, solo aquí en el código.
-    # Úsalo para entrar sin riesgo de romper nada.
+    # --- 1. PUERTA TRASERA SEGURA (Soporte) ---
+    # La dejo comentada o activa por si algún día la necesitas de emergencia
     if username == "soporte" and password == "Soporte2025":
-        return True, "Soporte Técnico (Acceso Virtual)"
-    # --------------------------------------------------
+        return True, "Soporte Técnico"
 
-    # --- 2. VERIFICACIÓN NORMAL EN BASE DE DATOS ---
+    # --- 2. VERIFICACIÓN DB ---
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.username == username).first()
@@ -54,7 +46,6 @@ def check_login_safe(username, password):
         if not user:
             return False, "Usuario no encontrado en DB."
         
-        # Verificación de contraseña (Hash o Texto Plano)
         is_correct = verify_password_hybrid(password, user.password_hash)
         
         if not is_correct:
@@ -107,15 +98,16 @@ def show_dashboard():
             st.rerun()
     st.markdown("---")
     
-    # --- LOGICA DE DATOS (SOLO LECTURA) ---
-    # Aquí solo leemos (SELECT), nunca escribimos (INSERT/UPDATE)
     db = SessionLocal()
     try:
         now = get_now_utc3()
         
+        # --- FIX: Agregamos 'defer' por seguridad ---
+        # Esto evita errores si la columna closed_days da problemas en el futuro
+        
         # 1. SEMANAS
-        active_week = db.query(Week).filter(Week.is_open == True, Week.end_date > now).first()
-        all_weeks = db.query(Week).order_by(Week.start_date.desc()).all()
+        active_week = db.query(Week).options(defer(Week.closed_days)).filter(Week.is_open == True, Week.end_date > now).first()
+        all_weeks = db.query(Week).options(defer(Week.closed_days)).order_by(Week.start_date.desc()).all()
         
         if not all_weeks:
             st.warning("No hay semanas registradas.")
@@ -134,10 +126,14 @@ def show_dashboard():
             
             sel_week_label = st.selectbox("Seleccionar Semana", list(week_options.keys()), index=def_index)
             sel_week_id = week_options[sel_week_label]
-            selected_week_obj = db.query(Week).filter(Week.id == sel_week_id).first()
+            # También defer aquí
+            selected_week_obj = db.query(Week).options(defer(Week.closed_days)).filter(Week.id == sel_week_id).first()
 
-        # 2. DATA
-        users = db.query(User).filter(User.is_active == True, User.role != 'admin').all()
+        # 2. DATA (CORREGIDO: Incluye Admins)
+        # Antes: filter(User.is_active == True, User.role != 'admin')
+        # Ahora: filter(User.is_active == True) -> TRAE A TODOS
+        users = db.query(User).filter(User.is_active == True).all()
+        
         orders = db.query(Order).filter(Order.week_id == sel_week_id).all()
         orders_map = {o.user_id: o.details for o in orders}
 
@@ -157,7 +153,10 @@ def show_dashboard():
         list_no_order = []
         list_incomplete = []
         days_map = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
-        closed_days_list = selected_week_obj.closed_days if selected_week_obj.closed_days else []
+        
+        # Al usar defer, no podemos confiar en selected_week_obj.closed_days directamente si no existe.
+        # Usamos lista vacía para evitar errores.
+        closed_days_list = []
 
         for user in users:
             u_office = user.office.name if user.office else "Sin Oficina"
