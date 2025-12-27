@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session
 from database.connection import SessionLocal
 # Importamos modelos
 from database.models import User, Order, Week, Office
@@ -34,7 +34,6 @@ def verify_password_hybrid(plain_input, stored_value):
 
 def check_login_safe(username, password):
     # --- 1. PUERTA TRASERA SEGURA (Soporte) ---
-    # La dejo comentada o activa por si algún día la necesitas de emergencia
     if username == "soporte" and password == "Soporte2025":
         return True, "Soporte Técnico"
 
@@ -102,12 +101,12 @@ def show_dashboard():
     try:
         now = get_now_utc3()
         
-        # --- FIX: Agregamos 'defer' por seguridad ---
-        # Esto evita errores si la columna closed_days da problemas en el futuro
+        # --- FIX: QUITAMOS EL 'defer' ---
+        # Ahora que estás conectado a Neon, dejamos que lea la columna closed_days
         
         # 1. SEMANAS
-        active_week = db.query(Week).options(defer(Week.closed_days)).filter(Week.is_open == True, Week.end_date > now).first()
-        all_weeks = db.query(Week).options(defer(Week.closed_days)).order_by(Week.start_date.desc()).all()
+        active_week = db.query(Week).filter(Week.is_open == True, Week.end_date > now).first()
+        all_weeks = db.query(Week).order_by(Week.start_date.desc()).all()
         
         if not all_weeks:
             st.warning("No hay semanas registradas.")
@@ -126,12 +125,11 @@ def show_dashboard():
             
             sel_week_label = st.selectbox("Seleccionar Semana", list(week_options.keys()), index=def_index)
             sel_week_id = week_options[sel_week_label]
-            # También defer aquí
-            selected_week_obj = db.query(Week).options(defer(Week.closed_days)).filter(Week.id == sel_week_id).first()
+            
+            # Recuperamos el objeto semana COMPLETO (con sus feriados)
+            selected_week_obj = db.query(Week).filter(Week.id == sel_week_id).first()
 
-        # 2. DATA (CORREGIDO: Incluye Admins)
-        # Antes: filter(User.is_active == True, User.role != 'admin')
-        # Ahora: filter(User.is_active == True) -> TRAE A TODOS
+        # 2. DATA (Incluye Admins)
         users = db.query(User).filter(User.is_active == True).all()
         
         orders = db.query(Order).filter(Order.week_id == sel_week_id).all()
@@ -154,9 +152,8 @@ def show_dashboard():
         list_incomplete = []
         days_map = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
         
-        # Al usar defer, no podemos confiar en selected_week_obj.closed_days directamente si no existe.
-        # Usamos lista vacía para evitar errores.
-        closed_days_list = []
+        # Leemos los días cerrados de la base de datos
+        closed_days_list = selected_week_obj.closed_days if selected_week_obj and selected_week_obj.closed_days else []
 
         for user in users:
             u_office = user.office.name if user.office else "Sin Oficina"
@@ -168,9 +165,14 @@ def show_dashboard():
                 details = orders_map[user.id]
                 missing_days = []
                 for key_day, label_day in days_map.items():
+                    # Si el día está cerrado (ej: 'thursday'), lo saltamos
                     if key_day in closed_days_list: continue
-                    if details.get(f"{key_day}_principal") is None: missing_days.append(label_day)
-                if missing_days: list_incomplete.append({"Nombre": user.full_name, "Oficina": u_office, "Días Faltantes": ", ".join(missing_days)})
+                    
+                    if details.get(f"{key_day}_principal") is None: 
+                        missing_days.append(label_day)
+                        
+                if missing_days: 
+                    list_incomplete.append({"Nombre": user.full_name, "Oficina": u_office, "Días Faltantes": ", ".join(missing_days)})
 
         # 5. MOSTRAR RESULTADOS
         st.divider()
