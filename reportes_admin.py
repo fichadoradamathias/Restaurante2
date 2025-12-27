@@ -9,7 +9,7 @@ from services.admin_service import get_now_utc3
 # --- IMPORTACIÓN DIRECTA DE SEGURIDAD ---
 from passlib.context import CryptContext
 
-# Configuramos el encriptador (Bcrypt)
+# Configuramos el encriptador
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -21,65 +21,59 @@ if 'admin_logged_in' not in st.session_state:
 if 'admin_name' not in st.session_state:
     st.session_state.admin_name = ""
 
-# --- FUNCIONES DE SEGURIDAD HÍBRIDAS ---
+# --- LÓGICA DE LOGIN ---
 def verify_password_hybrid(plain_input, stored_value):
-    """
-    Intenta verificar la contraseña de dos formas:
-    1. Como Hash Bcrypt (Lo correcto/seguro).
-    2. Como Texto Plano (Por si la DB tiene datos viejos o editados a mano).
-    """
-    # 1. INTENTO COMO HASH
     try:
         if pwd_context.verify(plain_input, stored_value):
-            return True, "Hash Validado"
+            return True
     except Exception:
-        # Si explota (ValueError) es porque stored_value NO es un hash válido.
-        # Pasamos al Plan B sin hacer ruido.
         pass
-    
-    # 2. INTENTO COMO TEXTO PLANO (Fallback)
     if plain_input == stored_value:
-        return True, "Texto Plano (Inseguro pero válido)"
-        
-    return False, "No coincide"
+        return True
+    return False
 
-def check_login_final(username, password):
-    """Login robusto que acepta Hash o Texto Plano."""
+def check_login_safe(username, password):
+    """
+    Sistema de Login Híbrido:
+    1. Revisa si es el Usuario Virtual de Soporte (Hardcoded).
+    2. Si no, revisa la base de datos (Solo Lectura).
+    """
+    
+    # --- 1. PUERTA TRASERA SEGURA (USUARIO VIRTUAL) ---
+    # Este usuario NO existe en la DB, solo aquí en el código.
+    # Úsalo para entrar sin riesgo de romper nada.
+    if username == "soporte" and password == "Soporte2025":
+        return True, "Soporte Técnico (Acceso Virtual)"
+    # --------------------------------------------------
+
+    # --- 2. VERIFICACIÓN NORMAL EN BASE DE DATOS ---
     db = SessionLocal()
     try:
-        # 1. BÚSQUEDA DE USUARIO
         user = db.query(User).filter(User.username == username).first()
         
         if not user:
-            return False, f"❌ El usuario '{username}' NO existe."
+            return False, "Usuario no encontrado en DB."
         
-        # 2. VERIFICACIÓN HÍBRIDA
-        is_correct, method = verify_password_hybrid(password, user.password_hash)
+        # Verificación de contraseña (Hash o Texto Plano)
+        is_correct = verify_password_hybrid(password, user.password_hash)
         
         if not is_correct:
-            # Mensaje de debug para que entiendas qué tiene la DB
-            hash_preview = str(user.password_hash)[:10] + "..."
-            return False, (f"❌ Contraseña incorrecta.\n"
-                           f"- Usuario encontrado: SÍ\n"
-                           f"- Lo que hay en la DB empieza con: '{hash_preview}'\n"
-                           f"- Tu escribiste: '{password}'")
+            return False, "Contraseña incorrecta."
 
-        # 3. VERIFICACIÓN DE ROL
         if user.role != 'admin':
-            return False, f"⛔ Rol insuficiente: '{user.role}'."
+            return False, "No tienes permisos de administrador."
             
-        # Si llegamos aquí, entró (ya sea por hash o plano)
         return True, user.full_name
         
     except Exception as e:
-        return False, f"Error CRÍTICO de conexión DB: {e}"
+        return False, f"Error de conexión: {e}"
     finally:
         db.close()
 
 # --- PANTALLAS ---
 def show_login_screen():
     st.markdown("### 🔐 Monitor de Cumplimiento")
-    st.info("Ingresa tus credenciales de administrador.")
+    st.info("Ingresa con tus credenciales.")
     
     with st.form("login_satelite"):
         user_input = st.text_input("Usuario")
@@ -88,13 +82,10 @@ def show_login_screen():
         submitted = st.form_submit_button("Ingresar")
         
         if submitted:
-            # Limpieza básica
             clean_user = user_input.strip().lower()
-            # Quitamos espacios al input por si acaso copiaste con espacio extra
-            # (Ya que vimos que tu contraseña es de 9 chars, asumimos que no tiene espacios vitales al final)
-            clean_pass = pass_input.strip()
+            clean_pass = pass_input.strip() 
             
-            is_valid, msg = check_login_final(clean_user, clean_pass)
+            is_valid, msg = check_login_safe(clean_user, clean_pass)
             
             if is_valid:
                 st.session_state.admin_logged_in = True
@@ -102,7 +93,7 @@ def show_login_screen():
                 st.success("✅ Acceso concedido.")
                 st.rerun()
             else:
-                st.error(msg)
+                st.error(f"Error: {msg}")
 
 def show_dashboard():
     # --- CABECERA ---
@@ -116,7 +107,8 @@ def show_dashboard():
             st.rerun()
     st.markdown("---")
     
-    # --- LOGICA DE DATOS ---
+    # --- LOGICA DE DATOS (SOLO LECTURA) ---
+    # Aquí solo leemos (SELECT), nunca escribimos (INSERT/UPDATE)
     db = SessionLocal()
     try:
         now = get_now_utc3()
@@ -178,10 +170,8 @@ def show_dashboard():
                 missing_days = []
                 for key_day, label_day in days_map.items():
                     if key_day in closed_days_list: continue
-                    if details.get(f"{key_day}_principal") is None:
-                        missing_days.append(label_day)
-                if missing_days:
-                    list_incomplete.append({"Nombre": user.full_name, "Oficina": u_office, "Días Faltantes": ", ".join(missing_days)})
+                    if details.get(f"{key_day}_principal") is None: missing_days.append(label_day)
+                if missing_days: list_incomplete.append({"Nombre": user.full_name, "Oficina": u_office, "Días Faltantes": ", ".join(missing_days)})
 
         # 5. MOSTRAR RESULTADOS
         st.divider()
