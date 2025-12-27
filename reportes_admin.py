@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from database.connection import SessionLocal
 # Importamos tus modelos TAL CUAL los definiste
 from database.models import User, Order, Week, Office
-# Asumo que verify_password existe en services.auth (como indicaste antes)
+# Importamos la verificación de contraseña existente
 from services.auth import verify_password
 from services.admin_service import get_now_utc3
 
@@ -22,17 +22,22 @@ def check_login(username, password):
     """Verifica credenciales contra la base de datos real."""
     db = SessionLocal()
     try:
-        # Buscamos usuario
+        # 1. Buscamos usuario
         user = db.query(User).filter(User.username == username).first()
         
         if not user:
             return False, "Usuario no encontrado"
         
-        # Verificamos hash (Usando tu lógica existente)
-        if not verify_password(password, user.password_hash):
-            return False, "Contraseña incorrecta"
+        # 2. Verificamos hash
+        # IMPORTANTE: Se usa la contraseña 'raw' (tal cual la escribe el usuario)
+        try:
+            if not verify_password(password, user.password_hash):
+                return False, "Contraseña incorrecta"
+        except Exception as e:
+            # Captura errores si la librería de hash falla con ciertos caracteres
+            return False, f"Error validando contraseña: {e}"
             
-        # Verificamos ROL (Solo admins pueden entrar aquí)
+        # 3. Verificamos ROL (Solo admins pueden entrar aquí)
         if user.role != 'admin':
             return False, "Acceso denegado: No tienes permisos de administrador."
             
@@ -55,11 +60,17 @@ def show_login_screen():
         submitted = st.form_submit_button("Ingresar")
         
         if submitted:
-            # Limpieza de inputs (Sanitization)
+            # --- CORRECCIÓN CRÍTICA DE LOGIN ---
+            # 1. Usuario: Quitamos espacios y forzamos minúsculas (estándar)
             clean_user = user_input.strip().lower()
-            clean_pass = pass_input.strip()
             
-            is_valid, msg = check_login(clean_user, clean_pass)
+            # 2. Contraseña: LA DEJAMOS EXACTAMENTE IGUAL.
+            # NO usamos .strip() aquí. Si tu contraseña tiene un espacio al final,
+            # ahora sí funcionará.
+            raw_pass = pass_input 
+            
+            is_valid, msg = check_login(clean_user, raw_pass)
+            
             if is_valid:
                 st.session_state.admin_logged_in = True
                 st.session_state.admin_name = msg
@@ -67,6 +78,8 @@ def show_login_screen():
                 st.rerun()
             else:
                 st.error(msg)
+                if "Contraseña" in msg:
+                    st.warning("Nota: Verifica mayúsculas y espacios.")
 
 def show_dashboard():
     """El Panel de Control de Datos"""
