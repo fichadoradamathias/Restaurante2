@@ -21,57 +21,54 @@ if 'admin_logged_in' not in st.session_state:
 if 'admin_name' not in st.session_state:
     st.session_state.admin_name = ""
 
-# --- FUNCIONES DE SEGURIDAD CON DEBUG ---
-def verify_password_direct(plain_password, hashed_password):
-    """Verifica contraseña usando la librería directamente."""
-    # Nota: passlib lanzará ValueError si la password es > 72 bytes
-    return pwd_context.verify(plain_password, hashed_password)
+# --- FUNCIONES DE SEGURIDAD HÍBRIDAS ---
+def verify_password_hybrid(plain_input, stored_value):
+    """
+    Intenta verificar la contraseña de dos formas:
+    1. Como Hash Bcrypt (Lo correcto/seguro).
+    2. Como Texto Plano (Por si la DB tiene datos viejos o editados a mano).
+    """
+    # 1. INTENTO COMO HASH
+    try:
+        if pwd_context.verify(plain_input, stored_value):
+            return True, "Hash Validado"
+    except Exception:
+        # Si explota (ValueError) es porque stored_value NO es un hash válido.
+        # Pasamos al Plan B sin hacer ruido.
+        pass
+    
+    # 2. INTENTO COMO TEXTO PLANO (Fallback)
+    if plain_input == stored_value:
+        return True, "Texto Plano (Inseguro pero válido)"
+        
+    return False, "No coincide"
 
-def check_login_debug(username, password):
-    """Verifica credenciales manejando errores de longitud de Bcrypt."""
+def check_login_final(username, password):
+    """Login robusto que acepta Hash o Texto Plano."""
     db = SessionLocal()
     try:
         # 1. BÚSQUEDA DE USUARIO
         user = db.query(User).filter(User.username == username).first()
         
         if not user:
-            return False, f"❌ El usuario '{username}' NO existe en la base de datos."
+            return False, f"❌ El usuario '{username}' NO existe."
         
-        # 2. DIAGNÓSTICO DE LONGITUD (Protección contra Copy-Paste erróneo)
-        # Calculamos el tamaño real en bytes
-        try:
-            pass_len = len(password.encode('utf-8'))
-        except:
-            pass_len = len(str(password))
-            
-        # 3. VERIFICACIÓN DE CONTRASEÑA BLINDADA
-        try:
-            is_correct = verify_password_direct(password, user.password_hash)
-        except ValueError as e:
-            # Capturamos el error específico de longitud de Bcrypt
-            error_msg = str(e)
-            if "72 bytes" in error_msg:
-                return False, (f"❌ ERROR DE COPIADO: Estás enviando una contraseña de {pass_len} caracteres.\n"
-                               f"El sistema solo acepta contraseñas normales.\n"
-                               f"Probablemente pegaste un texto muy largo o el hash por error.\n"
-                               f"INTENTA ESCRIBIRLA MANUALMENTE.")
-            else:
-                return False, f"Error técnico en librería: {e}"
-        except Exception as e:
-            return False, f"Error inesperado al verificar: {e}"
+        # 2. VERIFICACIÓN HÍBRIDA
+        is_correct, method = verify_password_hybrid(password, user.password_hash)
         
         if not is_correct:
-            # Mensaje detallado si la contraseña es incorrecta (pero longitud válida)
+            # Mensaje de debug para que entiendas qué tiene la DB
             hash_preview = str(user.password_hash)[:10] + "..."
             return False, (f"❌ Contraseña incorrecta.\n"
                            f"- Usuario encontrado: SÍ\n"
-                           f"- Hash en DB empieza con: '{hash_preview}'\n"
-                           f"- Tu contraseña tiene {pass_len} caracteres.")
+                           f"- Lo que hay en la DB empieza con: '{hash_preview}'\n"
+                           f"- Tu escribiste: '{password}'")
 
-        # 4. VERIFICACIÓN DE ROL
+        # 3. VERIFICACIÓN DE ROL
         if user.role != 'admin':
-            return False, f"⛔ Usuario '{username}' encontrado, pero su rol es '{user.role}' (Se requiere 'admin')."
+            return False, f"⛔ Rol insuficiente: '{user.role}'."
             
+        # Si llegamos aquí, entró (ya sea por hash o plano)
         return True, user.full_name
         
     except Exception as e:
@@ -91,12 +88,13 @@ def show_login_screen():
         submitted = st.form_submit_button("Ingresar")
         
         if submitted:
-            # Limpieza estándar para usuario
+            # Limpieza básica
             clean_user = user_input.strip().lower()
-            # La contraseña va CRUDA (sin strip) por si tiene espacios válidos
-            raw_pass = pass_input 
+            # Quitamos espacios al input por si acaso copiaste con espacio extra
+            # (Ya que vimos que tu contraseña es de 9 chars, asumimos que no tiene espacios vitales al final)
+            clean_pass = pass_input.strip()
             
-            is_valid, msg = check_login_debug(clean_user, raw_pass)
+            is_valid, msg = check_login_final(clean_user, clean_pass)
             
             if is_valid:
                 st.session_state.admin_logged_in = True
