@@ -7,10 +7,9 @@ from database.models import User, Order, Week, Office
 from services.admin_service import get_now_utc3
 
 # --- IMPORTACIÓN DIRECTA DE SEGURIDAD ---
-# Usamos esto directamente para evitar problemas de importación con services.auth
 from passlib.context import CryptContext
 
-# Configuramos el encriptador igual que en tu app principal
+# Configuramos el encriptador (Bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -25,14 +24,11 @@ if 'admin_name' not in st.session_state:
 # --- FUNCIONES DE SEGURIDAD CON DEBUG ---
 def verify_password_direct(plain_password, hashed_password):
     """Verifica contraseña usando la librería directamente."""
-    try:
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception as e:
-        st.error(f"Error técnico en la librería de encriptación: {e}")
-        return False
+    # Nota: passlib lanzará ValueError si la password es > 72 bytes
+    return pwd_context.verify(plain_password, hashed_password)
 
 def check_login_debug(username, password):
-    """Verifica credenciales con mensajes de diagnóstico en pantalla."""
+    """Verifica credenciales manejando errores de longitud de Bcrypt."""
     db = SessionLocal()
     try:
         # 1. BÚSQUEDA DE USUARIO
@@ -41,20 +37,36 @@ def check_login_debug(username, password):
         if not user:
             return False, f"❌ El usuario '{username}' NO existe en la base de datos."
         
-        # 2. DIAGNÓSTICO DE HASH (Solo visible si falla)
-        # Mostramos los primeros 10 caracteres del hash para ver si está encriptado
-        hash_preview = str(user.password_hash)[:15] + "..."
-        
-        # 3. VERIFICACIÓN DE CONTRASEÑA
-        is_correct = verify_password_direct(password, user.password_hash)
+        # 2. DIAGNÓSTICO DE LONGITUD (Protección contra Copy-Paste erróneo)
+        # Calculamos el tamaño real en bytes
+        try:
+            pass_len = len(password.encode('utf-8'))
+        except:
+            pass_len = len(str(password))
+            
+        # 3. VERIFICACIÓN DE CONTRASEÑA BLINDADA
+        try:
+            is_correct = verify_password_direct(password, user.password_hash)
+        except ValueError as e:
+            # Capturamos el error específico de longitud de Bcrypt
+            error_msg = str(e)
+            if "72 bytes" in error_msg:
+                return False, (f"❌ ERROR DE COPIADO: Estás enviando una contraseña de {pass_len} caracteres.\n"
+                               f"El sistema solo acepta contraseñas normales.\n"
+                               f"Probablemente pegaste un texto muy largo o el hash por error.\n"
+                               f"INTENTA ESCRIBIRLA MANUALMENTE.")
+            else:
+                return False, f"Error técnico en librería: {e}"
+        except Exception as e:
+            return False, f"Error inesperado al verificar: {e}"
         
         if not is_correct:
-            # Mensaje detallado para ti (el admin)
-            return False, (f"❌ Contraseña incorrecta.\n\n"
-                           f"Diagnóstico:\n"
+            # Mensaje detallado si la contraseña es incorrecta (pero longitud válida)
+            hash_preview = str(user.password_hash)[:10] + "..."
+            return False, (f"❌ Contraseña incorrecta.\n"
                            f"- Usuario encontrado: SÍ\n"
                            f"- Hash en DB empieza con: '{hash_preview}'\n"
-                           f"- ¿Es bcrypt?: {'Sí' if hash_preview.startswith('$2b$') else 'No/Dudoso'}")
+                           f"- Tu contraseña tiene {pass_len} caracteres.")
 
         # 4. VERIFICACIÓN DE ROL
         if user.role != 'admin':
@@ -69,8 +81,8 @@ def check_login_debug(username, password):
 
 # --- PANTALLAS ---
 def show_login_screen():
-    st.markdown("### 🔐 Monitor de Cumplimiento (Modo Diagnóstico)")
-    st.info("Ingresa tus datos. Si falla, verás un mensaje técnico detallado.")
+    st.markdown("### 🔐 Monitor de Cumplimiento")
+    st.info("Ingresa tus credenciales de administrador.")
     
     with st.form("login_satelite"):
         user_input = st.text_input("Usuario")
@@ -79,9 +91,9 @@ def show_login_screen():
         submitted = st.form_submit_button("Ingresar")
         
         if submitted:
-            # Limpieza estándar
+            # Limpieza estándar para usuario
             clean_user = user_input.strip().lower()
-            # La contraseña va CRUDDA (sin strip) por si tiene espacios
+            # La contraseña va CRUDA (sin strip) por si tiene espacios válidos
             raw_pass = pass_input 
             
             is_valid, msg = check_login_debug(clean_user, raw_pass)
@@ -173,7 +185,7 @@ def show_dashboard():
                 if missing_days:
                     list_incomplete.append({"Nombre": user.full_name, "Oficina": u_office, "Días Faltantes": ", ".join(missing_days)})
 
-        # 5. MOSTRAR
+        # 5. MOSTRAR RESULTADOS
         st.divider()
         col1, col2 = st.columns(2)
         with col1:
