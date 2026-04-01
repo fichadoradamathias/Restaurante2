@@ -1,4 +1,3 @@
-# services/admin_service.py
 import pandas as pd
 import json
 import os
@@ -78,7 +77,6 @@ def delete_menu_item(db: Session, item_id: int):
 
 def create_week(db: Session, title: str, start_date, end_datetime):
     """Crea semana con fecha y hora de cierre exactas."""
-    # Validación básica por si llega un string en lugar de datetime
     if isinstance(end_datetime, str): 
         pass 
     
@@ -95,7 +93,6 @@ def update_week_closed_days(db: Session, week_id: int, closed_days_list: list):
         return False, "Semana no encontrada."
     
     try:
-        # Aseguramos que sea una lista de strings y se guarda como JSON
         week.closed_days = closed_days_list
         db.commit()
         return True, "Días feriados actualizados."
@@ -106,7 +103,6 @@ def update_week_closed_days(db: Session, week_id: int, closed_days_list: list):
 def check_and_auto_close_weeks(db: Session):
     """Revisa y cierra semanas vencidas (Lazy Check)."""
     now_utc3 = get_now_utc3()
-    # Semanas abiertas cuya fecha de fin ya pasó
     overdue_weeks = db.query(Week).filter(Week.is_open == True, Week.end_date < now_utc3).all()
     
     count = 0
@@ -116,7 +112,7 @@ def check_and_auto_close_weeks(db: Session):
     return count
 
 def finalize_week_logic(db: Session, week_id: int):
-    """Lógica principal de cierre y llenado de huecos."""
+    """Lógica principal de cierre y llenado de huecos (Actualizado a nueva estructura)."""
     week = db.query(Week).filter(Week.id == week_id).first()
     if not week or not week.is_open: return None, "Error o ya cerrada."
 
@@ -129,7 +125,7 @@ def finalize_week_logic(db: Session, week_id: int):
         if user.id not in users_with_order_ids:
             ghost_details = {}
             for day in day_keys:
-                for db_type in ["principal", "side", "salad"]: ghost_details[f"{day}_{db_type}"] = None 
+                ghost_details[day] = {"tipo": "nada"} # Nueva estructura de "No Pedido"
             db.add(Order(user_id=user.id, week_id=week_id, status="no_pedido", details=ghost_details))
     
     week.is_open = False 
@@ -149,32 +145,67 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
 
     orders = query.all()
     data = []
+    
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
     english_to_spanish = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
-    meal_types = [("principal", "Comida"), ("side", "Acompañamiento"), ("salad", "Ensalada")]
+    
+    # NUEVAS COLUMNAS: Solo 1 columna por día + Nota
     final_cols = ["Usuario", "Oficina"]
     for d_key in day_keys:
         d_name = english_to_spanish[d_key]
-        for _, label in meal_types: final_cols.append(f"{d_name} - {label}")
+        final_cols.append(d_name)       # La columna del pedido principal
+        final_cols.append(f"Nota {d_name}") # La columna de la nota
 
-    menu_item_cache = {} 
+    menu_item_cache = {}
+    
+    # Función interna para buscar el nombre en caché
+    def get_desc(item_id):
+        if not item_id: return None
+        if item_id not in menu_item_cache:
+            mi = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+            if mi: menu_item_cache[item_id] = mi.description
+            else: menu_item_cache[item_id] = "Desconocido"
+        return menu_item_cache[item_id]
+
+    closed_days_list = week.closed_days if week.closed_days else []
+
     for order in orders:
         details = order.details 
         user_office = order.user.office.name if order.user.office else "Sin Oficina"
         row = {"Usuario": order.user.full_name, "Oficina": user_office}
+        
         for day in day_keys:
             d_es = english_to_spanish[day]
-            for db_type, label in meal_types:
-                val = details.get(f"{day}_{db_type}")
-                desc = "NO PEDIDO"
-                if isinstance(val, int):
-                    if val not in menu_item_cache:
-                        mi = db.query(MenuItem).filter(MenuItem.id == val).first()
-                        if mi: menu_item_cache[val] = mi.description
-                    desc = menu_item_cache.get(val, "Opción Desconocida")
-                elif order.status == "no_pedido" or val is None: desc = "NO PEDIDO"
-                else: desc = "Dato Inválido"
-                row[f"{d_es} - {label}"] = desc
+            
+            if day in closed_days_list:
+                row[d_es] = "FERIADO"
+                row[f"Nota {d_es}"] = ""
+                continue
+                
+            day_order = details.get(day, {})
+            tipo = day_order.get("tipo", "nada")
+            nota = day_order.get("note", "")
+            
+            texto_pedido = "NO PEDIDO"
+            
+            if tipo == "completo":
+                comp_id = day_order.get("plato_id")
+                if comp_id: texto_pedido = f"COMPLETO: {get_desc(comp_id)}"
+                
+            elif tipo == "combinado":
+                prot_id = day_order.get("proteina_id")
+                guar_id = day_order.get("guarnicion_id")
+                
+                partes = []
+                if prot_id: partes.append(get_desc(prot_id))
+                if guar_id: partes.append(get_desc(guar_id))
+                
+                if partes:
+                    texto_pedido = " + ".join(partes)
+            
+            row[d_es] = texto_pedido
+            row[f"Nota {d_es}"] = nota
+            
         data.append(row)
 
     df = pd.DataFrame(data, columns=final_cols).fillna("")
@@ -185,16 +216,3 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     df.to_excel(path, index=False) 
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
-
-# --- HELPERS (Legacy/User Panel) ---
-def check_existing_order(db: Session, user_id: int, week_id: int):
-    existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
-    return existing_order is not None
-
-def get_menu_options_for_week(db: Session, week_id: int):
-    menu_items = db.query(MenuItem).filter(MenuItem.week_id == week_id).order_by(MenuItem.day, MenuItem.type, MenuItem.option_number).all()
-    menu = {"Lunes": {"principal": [], "side": [], "salad": []}, "Martes": {"principal": [], "side": [], "salad": []}, "Miércoles": {"principal": [], "side": [], "salad": []}, "Jueves": {"principal": [], "side": [], "salad": []}, "Viernes": {"principal": [], "side": [], "salad": []}}
-    for item in menu_items:
-        if item.day in menu and item.type in menu[item.day]:
-            menu[item.day][item.type].append((item.id, item.description, item.option_number))
-    return menu

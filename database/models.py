@@ -45,7 +45,7 @@ class Week(Base):
     is_finalized = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-    # NUEVO: Lista de días cerrados (ej: ["thursday", "friday"])
+    # Lista de días cerrados (Feriados) (ej: ["thursday", "friday"])
     closed_days = Column(JSON, default=[]) 
 
     # Relaciones
@@ -59,7 +59,10 @@ class MenuItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
     day = Column(String, nullable=False)
-    type = Column(String, nullable=False)
+    
+    # NUEVA LÓGICA: Ahora este campo guardará: 'Plato Completo', 'Proteína' o 'Guarnición'
+    type = Column(String, nullable=False) 
+    
     option_number = Column(Integer, default=1)
     description = Column(String, nullable=False)
     
@@ -72,7 +75,10 @@ class Order(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
     status = Column(String, default="success") 
+    
+    # NUEVA LÓGICA: Aquí guardaremos si el usuario eligió "Combinado" o "Completo"
     details = Column(JSON, nullable=False) 
+    
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

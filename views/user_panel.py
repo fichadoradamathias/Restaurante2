@@ -4,12 +4,23 @@ from database.models import Week, MenuItem, Order
 from services.admin_service import get_now_utc3
 import time
 
+# --- FUNCIONES DE BLOQUEO MUTUO PARA STREAMLIT ---
+def seleccionar_combinado(dia_code):
+    """Si el usuario elige proteína o guarnición, borramos el plato completo."""
+    st.session_state[f"widget_completo_{dia_code}"] = "Ninguno"
+
+def seleccionar_completo(dia_code):
+    """Si el usuario elige plato completo, borramos proteína y guarnición."""
+    st.session_state[f"widget_proteina_{dia_code}"] = "Ninguno"
+    st.session_state[f"widget_guarnicion_{dia_code}"] = "Ninguno"
+
 # --- FUNCIONES AUXILIARES ---
 
 def get_full_week_menu(db: Session, week_id: int):
     """Descarga todo el menú de la semana y lo estructura por día."""
     items = db.query(MenuItem).filter(MenuItem.week_id == week_id).all()
-    menu_structure = {day: {'principal': [], 'side': [], 'salad': []} 
+    # Actualizado a las nuevas categorías
+    menu_structure = {day: {'Proteína': [], 'Guarnición': [], 'Plato Completo': []} 
                       for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']}
     
     for item in items:
@@ -81,67 +92,83 @@ def user_dashboard(db_session_maker):
         days_labels = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
         # 2. CARGAR DATOS Y ESTADO DEL PEDIDO
-        # Verificar si ya existe un pedido en DB
         existing_order = db.query(Order).filter(
             Order.user_id == user_id, 
             Order.week_id == current_week.id
         ).first()
 
-        # Variable de estado para saber si estamos editando
         if "is_editing_order" not in st.session_state:
             st.session_state.is_editing_order = False
 
-        # Si NO hay pedido, forzamos modo edición
         if not existing_order:
             st.session_state.is_editing_order = True
 
-        # Cargar datos en memoria (Solo si no están cargados o cambió la semana)
+        full_menu = get_full_week_menu(db, current_week.id)
+
+        # Cargar datos en memoria de Streamlit para los widgets
         if "week_data_loaded" not in st.session_state or st.session_state.get("current_week_id") != current_week.id:
             saved_details = existing_order.details if existing_order else {}
             for d in days_keys:
-                st.session_state[f"main_{d}"] = saved_details.get(f"{d}_principal", None)
-                st.session_state[f"side_{d}"] = saved_details.get(f"{d}_side", None)
-                st.session_state[f"salad_{d}"] = saved_details.get(f"{d}_salad", None)
-                st.session_state[f"note_{d}"] = saved_details.get(f"{d}_note", "")
+                day_details = saved_details.get(d, {})
+                tipo = day_details.get("tipo", "nada")
+                
+                prot_val = "Ninguno"
+                guar_val = "Ninguno"
+                comp_val = "Ninguno"
+
+                if tipo == "completo":
+                    comp_id = day_details.get("plato_id")
+                    comp_name = get_item_name_by_id(full_menu, d, 'Plato Completo', comp_id)
+                    if comp_name: comp_val = comp_name
+                elif tipo == "combinado":
+                    prot_id = day_details.get("proteina_id")
+                    guar_id = day_details.get("guarnicion_id")
+                    prot_name = get_item_name_by_id(full_menu, d, 'Proteína', prot_id)
+                    guar_name = get_item_name_by_id(full_menu, d, 'Guarnición', guar_id)
+                    if prot_name: prot_val = prot_name
+                    if guar_name: guar_val = guar_name
+
+                st.session_state[f"widget_proteina_{d}"] = prot_val
+                st.session_state[f"widget_guarnicion_{d}"] = guar_val
+                st.session_state[f"widget_completo_{d}"] = comp_val
+                st.session_state[f"widget_note_{d}"] = day_details.get("note", "")
             
             st.session_state.week_data_loaded = True
             st.session_state.current_week_id = current_week.id
 
         # 3. HEADER
         st.title(f"🍽️ Menú: {current_week.title}")
-        full_menu = get_full_week_menu(db, current_week.id)
 
         # ---------------------------------------------------------
         # VISTA 1: RESUMEN DE PEDIDO (Solo lectura)
         # ---------------------------------------------------------
         if existing_order and not st.session_state.is_editing_order:
             st.success("✅ Ya has enviado tu pedido para esta semana.")
-            
             st.markdown("### 📋 Tu Selección Confirmada:")
             
             details = existing_order.details
             hay_pedidos = False
 
-            # Contenedor con borde para que parezca un ticket
             with st.container(border=True):
                 for i, d_key in enumerate(days_keys):
-                    main_id = details.get(f"{d_key}_principal")
-                    
-                    # Solo mostrar días donde SE PIDIÓ comida (ID no es None)
-                    if main_id:
+                    day_details = details.get(d_key, {})
+                    tipo = day_details.get("tipo", "nada")
+                    note = day_details.get("note", "")
+
+                    if tipo != "nada":
                         hay_pedidos = True
                         day_name = days_labels[i]
-                        
-                        # Traducir IDs a Nombres
-                        main_name = get_item_name_by_id(full_menu, d_key, 'principal', main_id)
-                        side_name = get_item_name_by_id(full_menu, d_key, 'side', details.get(f"{d_key}_side"))
-                        salad_name = get_item_name_by_id(full_menu, d_key, 'salad', details.get(f"{d_key}_salad"))
-                        note = details.get(f"{d_key}_note", "")
-
                         st.markdown(f"**📅 {day_name}**")
-                        st.markdown(f"- 🥘 **Plato:** {main_name}")
-                        if side_name: st.markdown(f"- 🍟 **Guarnición:** {side_name}")
-                        if salad_name: st.markdown(f"- 🥗 **Ensalada:** {salad_name}")
+
+                        if tipo == "completo":
+                            comp_name = get_item_name_by_id(full_menu, d_key, 'Plato Completo', day_details.get("plato_id"))
+                            st.markdown(f"- 🍲 **Plato Completo:** {comp_name}")
+                        elif tipo == "combinado":
+                            prot_name = get_item_name_by_id(full_menu, d_key, 'Proteína', day_details.get("proteina_id"))
+                            guar_name = get_item_name_by_id(full_menu, d_key, 'Guarnición', day_details.get("guarnicion_id"))
+                            if prot_name: st.markdown(f"- 🥩 **Proteína:** {prot_name}")
+                            if guar_name: st.markdown(f"- 🍟 **Guarnición:** {guar_name}")
+
                         if note: st.caption(f"📝 Nota: {note}")
                         st.divider()
             
@@ -151,13 +178,12 @@ def user_dashboard(db_session_maker):
             st.markdown("---")
             col_change, col_dummy = st.columns([1, 2])
             with col_change:
-                # Botón para activar el modo edición
                 if st.button("✏️ CAMBIAR / ACTUALIZAR PEDIDO", use_container_width=True):
                     st.session_state.is_editing_order = True
                     st.rerun()
 
         # ---------------------------------------------------------
-        # VISTA 2: FORMULARIO DE EDICIÓN (Pestañas)
+        # VISTA 2: FORMULARIO DE EDICIÓN (Pestañas y Tarjetas)
         # ---------------------------------------------------------
         else:
             if existing_order:
@@ -165,7 +191,6 @@ def user_dashboard(db_session_maker):
             else:
                 st.caption("Selecciona una pestaña por día y elige tu comida.")
 
-            # --- NAVEGACIÓN POR PESTAÑAS ---
             tabs = st.tabs(days_labels)
             
             for i, tab in enumerate(tabs):
@@ -178,72 +203,62 @@ def user_dashboard(db_session_maker):
                     
                     if current_day_code in closed_days:
                         st.error(f"⛔ {current_day_name}: FERIADO / SIN SERVICIO")
-                        st.session_state[f"main_{current_day_code}"] = None
+                        continue
                     
-                    elif not day_items or not day_items['principal']:
-                        st.warning("⚠️ El menú de este día aún no ha sido cargado.")
+                    if not day_items or (not day_items['Proteína'] and not day_items['Plato Completo']):
+                        st.warning("⚠️ El menú de este día aún no ha sido cargado completamente.")
+                        continue
+
+                    # Preparar diccionarios de opciones
+                    prot_opts = {p.description: p.id for p in day_items.get('Proteína', [])}
+                    prot_opts["Ninguno"] = None
                     
-                    else:
-                        # PLATO PRINCIPAL
-                        mains = day_items['principal']
-                        main_options = {f"Opción {m.option_number}: {m.description}": m.id for m in mains}
-                        main_options["❌ No pedido"] = None 
+                    guar_opts = {g.description: g.id for g in day_items.get('Guarnición', [])}
+                    guar_opts["Ninguno"] = None
+                    
+                    comp_opts = {c.description: c.id for c in day_items.get('Plato Completo', [])}
+                    comp_opts["Ninguno"] = None
 
-                        current_val_main = st.session_state.get(f"main_{current_day_code}")
-                        
-                        try:
-                            if current_val_main in main_options.values():
-                                idx_main = list(main_options.values()).index(current_val_main)
-                            else:
-                                idx_main = len(main_options) - 1
-                        except:
-                            idx_main = len(main_options) - 1
+                    # Diseño de las dos Tarjetas
+                    col_tarjeta_a, col_tarjeta_b = st.columns(2)
+                    
+                    # TARJETA A: COMBINADO
+                    with col_tarjeta_a:
+                        with st.container(border=True):
+                            st.markdown("### 🥗 Plato Combinado")
+                            st.selectbox(
+                                "Elige tu Proteína:", 
+                                options=list(prot_opts.keys()), 
+                                key=f"widget_proteina_{current_day_code}",
+                                on_change=seleccionar_combinado,
+                                args=(current_day_code,)
+                            )
+                            st.selectbox(
+                                "Elige tu Guarnición:", 
+                                options=list(guar_opts.keys()), 
+                                key=f"widget_guarnicion_{current_day_code}",
+                                on_change=seleccionar_combinado,
+                                args=(current_day_code,)
+                            )
 
-                        selected_label = st.radio(
-                            f"Plato Principal - {current_day_name}:",
-                            options=list(main_options.keys()),
-                            index=idx_main,
-                            key=f"widget_main_{current_day_code}" 
-                        )
-                        st.session_state[f"main_{current_day_code}"] = main_options[selected_label]
-
-                        # EXTRAS
-                        if st.session_state[f"main_{current_day_code}"] is not None:
-                            st.divider()
-                            col_s1, col_s2 = st.columns(2)
-                            
-                            # Guarnición
-                            with col_s1:
-                                sides = day_items['side']
-                                side_opts = {s.description: s.id for s in sides}
-                                side_opts["Ninguno"] = None
-                                curr_side = st.session_state.get(f"side_{current_day_code}")
-                                idx_side = list(side_opts.values()).index(curr_side) if curr_side in side_opts.values() else len(side_opts)-1
-                                sel_side_lbl = st.selectbox("Guarnición", list(side_opts.keys()), index=idx_side, key=f"widget_side_{current_day_code}")
-                                st.session_state[f"side_{current_day_code}"] = side_opts[sel_side_lbl]
-
-                            # Ensalada
-                            with col_s2:
-                                salads = day_items['salad']
-                                salad_opts = {s.description: s.id for s in salads}
-                                salad_opts["Ninguna"] = None
-                                curr_salad = st.session_state.get(f"salad_{current_day_code}")
-                                idx_salad = list(salad_opts.values()).index(curr_salad) if curr_salad in salad_opts.values() else len(salad_opts)-1
-                                sel_salad_lbl = st.selectbox("Ensalada", list(salad_opts.keys()), index=idx_salad, key=f"widget_salad_{current_day_code}")
-                                st.session_state[f"salad_{current_day_code}"] = salad_opts[sel_salad_lbl]
-                            
-                            st.markdown("###")
-                            note_val = st.text_area("Nota especial:", value=st.session_state.get(f"note_{current_day_code}", ""), key=f"widget_note_{current_day_code}", height=70)
-                            st.session_state[f"note_{current_day_code}"] = note_val
-                        else:
-                            # Limpiar extras
-                            st.session_state[f"side_{current_day_code}"] = None
-                            st.session_state[f"salad_{current_day_code}"] = None
+                    # TARJETA B: COMPLETO
+                    with col_tarjeta_b:
+                        with st.container(border=True):
+                            st.markdown("### 🍲 Plato Completo")
+                            st.selectbox(
+                                "Plato del Día:", 
+                                options=list(comp_opts.keys()), 
+                                key=f"widget_completo_{current_day_code}",
+                                on_change=seleccionar_completo,
+                                args=(current_day_code,)
+                            )
+                    
+                    st.markdown("###")
+                    st.text_area("Nota especial:", key=f"widget_note_{current_day_code}", height=70)
 
             # --- BOTONES DE ACCIÓN (Enviar o Cancelar) ---
             st.markdown("---")
             
-            # Si estamos editando un pedido existente, damos opción de CANCELAR los cambios
             if existing_order:
                 col_cancel, col_save = st.columns([1, 2])
                 with col_cancel:
@@ -260,17 +275,32 @@ def user_dashboard(db_session_maker):
                     count_meals = 0
                     
                     for d in days_keys:
-                        m_id = st.session_state.get(f"main_{d}")
-                        final_data_payload[f"{d}_principal"] = m_id
-                        if m_id is not None:
-                            final_data_payload[f"{d}_side"] = st.session_state.get(f"side_{d}")
-                            final_data_payload[f"{d}_salad"] = st.session_state.get(f"salad_{d}")
-                            final_data_payload[f"{d}_note"] = st.session_state.get(f"note_{d}", "")
+                        # Extraer opciones del menú para obtener los IDs correctos
+                        d_items = full_menu.get(d, {})
+                        p_opts = {p.description: p.id for p in d_items.get('Proteína', [])}
+                        g_opts = {g.description: g.id for g in d_items.get('Guarnición', [])}
+                        c_opts = {c.description: c.id for c in d_items.get('Plato Completo', [])}
+
+                        # Leer los valores actuales de los widgets
+                        prot_name = st.session_state.get(f"widget_proteina_{d}")
+                        guar_name = st.session_state.get(f"widget_guarnicion_{d}")
+                        comp_name = st.session_state.get(f"widget_completo_{d}")
+                        nota = st.session_state.get(f"widget_note_{d}", "")
+                        
+                        # Traducir los nombres seleccionados a IDs numéricos
+                        prot_id = p_opts.get(prot_name) if prot_name and prot_name != "Ninguno" else None
+                        guar_id = g_opts.get(guar_name) if guar_name and guar_name != "Ninguno" else None
+                        comp_id = c_opts.get(comp_name) if comp_name and comp_name != "Ninguno" else None
+
+                        # Armar el JSON estructural
+                        if comp_id is not None:
+                            final_data_payload[d] = {"tipo": "completo", "plato_id": comp_id, "note": nota}
+                            count_meals += 1
+                        elif prot_id is not None or guar_id is not None:
+                            final_data_payload[d] = {"tipo": "combinado", "proteina_id": prot_id, "guarnicion_id": guar_id, "note": nota}
                             count_meals += 1
                         else:
-                            final_data_payload[f"{d}_side"] = None
-                            final_data_payload[f"{d}_salad"] = None
-                            final_data_payload[f"{d}_note"] = ""
+                            final_data_payload[d] = {"tipo": "nada"}
                     
                     if count_meals == 0:
                         st.warning("⚠️ No has seleccionado ningún plato para ningún día.")
@@ -279,7 +309,7 @@ def user_dashboard(db_session_maker):
                         if success:
                             st.balloons()
                             st.success(msg)
-                            st.session_state.is_editing_order = False # Salir del modo edición
+                            st.session_state.is_editing_order = False
                             time.sleep(1.5)
                             st.rerun()
                         else:

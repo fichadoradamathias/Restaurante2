@@ -4,7 +4,7 @@ from database.models import Week, MenuItem, Office
 from services.admin_service import (
     create_week, finalize_week_logic, update_menu_item, delete_menu_item, 
     export_week_to_excel, get_all_offices, create_office, delete_office,
-    update_week_closed_days, create_menu_item # <--- AGREGAMOS create_menu_item
+    update_week_closed_days, create_menu_item 
 )
 from services.logic import delete_week_data 
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ def admin_dashboard(db_session_maker):
                         st.rerun()
         else: st.info("No hay semanas.")
 
-    # --- TAB 2: MENÚ Y FERIADOS (CORREGIDO) ---
+    # --- TAB 2: MENÚ Y FERIADOS ---
     with tab2:
         st.subheader("🍔 Gestión de Menú y Feriados")
         
@@ -95,24 +95,25 @@ def admin_dashboard(db_session_maker):
             
             st.divider()
 
-            # 2. ZONA DE CARGA DE PLATOS (RESTAURADA)
+            # 2. ZONA DE CARGA DE PLATOS (NUEVAS CATEGORÍAS)
             st.markdown("### 🍽️ 2. Cargar Platos al Menú")
             
             with st.form("add_item_form"):
                 c1, c2 = st.columns(2)
-                # Filtramos los días para que primero salgan los nombres en español
+                
                 day_options = {d[1]: d[0] for d in days_map} # {'Lunes': 'monday', ...}
                 
                 sel_day_label = c1.selectbox("Día", list(day_options.keys()))
                 sel_day_code = day_options[sel_day_label]
                 
-                # Advertencia visual si el día es feriado
                 if sel_day_code in new_closed_days:
                     st.warning(f"⚠️ Atención: Estás cargando comida para el {sel_day_label}, pero está marcado como FERIADO.")
 
-                sel_type_label = c2.selectbox("Tipo", ["Plato Principal", "Acompañamiento", "Ensalada"])
-                type_map = {"Plato Principal": "principal", "Acompañamiento": "side", "Ensalada": "salad"}
-                sel_type_code = type_map[sel_type_label]
+                # ---> EL CAMBIO CLAVE ESTÁ AQUÍ <---
+                # Aseguramos que el administrador solo pueda elegir estas 3 opciones exactas.
+                sel_type_label = c2.selectbox("Tipo de Plato", ["Proteína", "Guarnición", "Plato Completo"])
+                # Mantenemos el nombre igual para la base de datos para no confundir.
+                sel_type_code = sel_type_label 
                 
                 c3, c4 = st.columns([1, 3])
                 opt_num = c3.number_input("Opción #", min_value=1, value=1)
@@ -120,6 +121,7 @@ def admin_dashboard(db_session_maker):
                 
                 if st.form_submit_button("➕ Agregar Plato"):
                     if desc:
+                        # Guardamos en la BD usando el nombre exacto de la categoría (Ej: "Proteína")
                         ok, msg = create_menu_item(db, sel_week_id, sel_day_code, sel_type_code, opt_num, desc)
                         if ok: st.success(msg); st.rerun()
                         else: st.error(msg)
@@ -134,12 +136,11 @@ def admin_dashboard(db_session_maker):
             
             if items:
                 for item in items:
-                    # Traducción visual
                     d_es = next((d[1] for d in days_map if d[0] == item.day), item.day)
-                    t_es = next((k for k, v in type_map.items() if v == item.type), item.type)
                     
                     col_txt, col_del = st.columns([4, 1])
-                    col_txt.text(f"[{d_es}] {t_es} #{item.option_number}: {item.description}")
+                    # Ya no traducimos el tipo, mostramos el valor directo ("Proteína", etc)
+                    col_txt.text(f"[{d_es}] {item.type} #{item.option_number}: {item.description}")
                     
                     if col_del.button("❌", key=f"del_item_{item.id}"):
                         delete_menu_item(db, item.id)

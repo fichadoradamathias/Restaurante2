@@ -101,9 +101,6 @@ def show_dashboard():
     try:
         now = get_now_utc3()
         
-        # --- FIX: QUITAMOS EL 'defer' ---
-        # Ahora que estás conectado a Neon, dejamos que lea la columna closed_days
-        
         # 1. SEMANAS
         active_week = db.query(Week).filter(Week.is_open == True, Week.end_date > now).first()
         all_weeks = db.query(Week).order_by(Week.start_date.desc()).all()
@@ -168,7 +165,10 @@ def show_dashboard():
                     # Si el día está cerrado (ej: 'thursday'), lo saltamos
                     if key_day in closed_days_list: continue
                     
-                    if details.get(f"{key_day}_principal") is None: 
+                    # NUEVA LÓGICA: Extraemos el pedido de ese día y vemos si tiene datos
+                    day_order = details.get(key_day, {})
+                    # Si el tipo es "nada", significa que no eligió opciones
+                    if day_order.get("tipo", "nada") == "nada": 
                         missing_days.append(label_day)
                         
                 if missing_days: 
