@@ -96,7 +96,8 @@ def user_dashboard(db_session_maker):
 
         full_menu = get_full_week_menu(db, current_week.id)
 
-        if "week_data_loaded" not in st.session_state or st.session_state.get("current_week_id") != current_week.id:
+        # FIX: Forzar la recarga de datos cuando se edita para evitar el "Olvido" de Streamlit
+        if not st.session_state.get("week_data_loaded") or st.session_state.get("current_week_id") != current_week.id:
             saved_details = existing_order.details if existing_order else {}
             for d in days_keys:
                 day_details = saved_details.get(d, {})
@@ -129,7 +130,6 @@ def user_dashboard(db_session_maker):
         # 3. HEADER Y TEXTO DE INSTRUCCIONES
         st.title(f"🍽️ Menú: {current_week.title}")
         
-        # Este cartel reemplaza la información anterior y deja clara la regla
         st.info("ℹ️ **Información:** Solo puedes llenar una de las dos secciones (Plato Combinado o Plato Completo). Para Plato Combinado necesitas pedir **obligatoriamente** Proteína y Guarnición, no es posible enviar uno solo.")
 
         # ---------------------------------------------------------
@@ -162,7 +162,6 @@ def user_dashboard(db_session_maker):
                             if prot_name: st.markdown(f"- 🥩 **Proteína:** {prot_name}")
                             if guar_name: st.markdown(f"- 🍟 **Guarnición:** {guar_name}")
 
-                        if note: st.caption(f"📝 Nota: {note}")
                         st.divider()
             
             if not hay_pedidos:
@@ -173,6 +172,8 @@ def user_dashboard(db_session_maker):
             with col_change:
                 if st.button("✏️ CAMBIAR / ACTUALIZAR PEDIDO", use_container_width=True):
                     st.session_state.is_editing_order = True
+                    # FIX: Forzamos la recarga al volver a editar para que traiga los "Ninguno" correctos
+                    st.session_state.week_data_loaded = False 
                     st.rerun()
 
         # ---------------------------------------------------------
@@ -197,14 +198,27 @@ def user_dashboard(db_session_maker):
                         st.warning("⚠️ El menú de este día aún no ha sido cargado completamente.")
                         continue
 
+                    # Preparar opciones
                     prot_opts = {p.description: p.id for p in day_items.get('Proteína', [])}
                     prot_opts["Ninguno"] = None
+                    prot_list = list(prot_opts.keys())
                     
                     guar_opts = {g.description: g.id for g in day_items.get('Guarnición', [])}
                     guar_opts["Ninguno"] = None
+                    guar_list = list(guar_opts.keys())
                     
                     comp_opts = {c.description: c.id for c in day_items.get('Plato Completo', [])}
                     comp_opts["Ninguno"] = None
+                    comp_list = list(comp_opts.keys())
+
+                    # FIX: Índices blindados. Si Streamlit olvida el valor, busca 'Ninguno' por defecto
+                    curr_prot = st.session_state.get(f"widget_proteina_{current_day_code}", "Ninguno")
+                    curr_guar = st.session_state.get(f"widget_guarnicion_{current_day_code}", "Ninguno")
+                    curr_comp = st.session_state.get(f"widget_completo_{current_day_code}", "Ninguno")
+
+                    idx_prot = prot_list.index(curr_prot) if curr_prot in prot_list else prot_list.index("Ninguno")
+                    idx_guar = guar_list.index(curr_guar) if curr_guar in guar_list else guar_list.index("Ninguno")
+                    idx_comp = comp_list.index(curr_comp) if curr_comp in comp_list else comp_list.index("Ninguno")
 
                     col_tarjeta_a, col_tarjeta_b = st.columns(2)
                     
@@ -213,14 +227,16 @@ def user_dashboard(db_session_maker):
                             st.markdown("### 🥗 Plato Combinado")
                             st.selectbox(
                                 "Elige tu Proteína:", 
-                                options=list(prot_opts.keys()), 
+                                options=prot_list, 
+                                index=idx_prot,
                                 key=f"widget_proteina_{current_day_code}",
                                 on_change=seleccionar_combinado,
                                 args=(current_day_code,)
                             )
                             st.selectbox(
                                 "Elige tu Guarnición:", 
-                                options=list(guar_opts.keys()), 
+                                options=guar_list, 
+                                index=idx_guar,
                                 key=f"widget_guarnicion_{current_day_code}",
                                 on_change=seleccionar_combinado,
                                 args=(current_day_code,)
@@ -231,14 +247,14 @@ def user_dashboard(db_session_maker):
                             st.markdown("### 🍲 Plato Completo")
                             st.selectbox(
                                 "Plato del Día:", 
-                                options=list(comp_opts.keys()), 
+                                options=comp_list,
+                                index=idx_comp,
                                 key=f"widget_completo_{current_day_code}",
                                 on_change=seleccionar_completo,
                                 args=(current_day_code,)
                             )
                     
-                    st.markdown("###")
-                    st.text_area("Nota especial:", key=f"widget_note_{current_day_code}", height=70)
+                    st.text_area("Nota especial (Opcional, no se exporta):", key=f"widget_note_{current_day_code}", height=70)
 
             # --- BOTONES DE ACCIÓN (Enviar o Cancelar) ---
             st.markdown("---")
@@ -248,6 +264,7 @@ def user_dashboard(db_session_maker):
                 with col_cancel:
                     if st.button("❌ Cancelar Cambios", use_container_width=True):
                         st.session_state.is_editing_order = False
+                        st.session_state.week_data_loaded = False # Limpia para volver a leer la BD
                         st.rerun()
             else:
                 col_save = st.container()
@@ -257,7 +274,7 @@ def user_dashboard(db_session_maker):
                 if st.button(btn_text, type="primary", use_container_width=True):
                     final_data_payload = {}
                     count_meals = 0
-                    validation_error = False # Bandera para frenar el guardado
+                    validation_error = False 
                     
                     for i, d in enumerate(days_keys):
                         d_items = full_menu.get(d, {})
@@ -282,14 +299,13 @@ def user_dashboard(db_session_maker):
                             if prot_id is None or guar_id is None:
                                 st.error(f"⚠️ En **{days_labels[i]}**: Para pedir el Plato Combinado debes elegir obligatoriamente Proteína y Guarnición. ¡Te falta seleccionar una opción!")
                                 validation_error = True
-                                break # Frena el ciclo para que no guarde
+                                break
                             
                             final_data_payload[d] = {"tipo": "combinado", "proteina_id": prot_id, "guarnicion_id": guar_id, "note": nota}
                             count_meals += 1
                         else:
                             final_data_payload[d] = {"tipo": "nada"}
                     
-                    # Si no hubo errores de validación, procedemos a guardar
                     if not validation_error:
                         if count_meals == 0:
                             st.warning("⚠️ No has seleccionado ningún plato para ningún día.")
@@ -299,6 +315,7 @@ def user_dashboard(db_session_maker):
                                 st.balloons()
                                 st.success(msg)
                                 st.session_state.is_editing_order = False
+                                st.session_state.week_data_loaded = False # Limpia estado al guardar exitosamente
                                 time.sleep(1.5)
                                 st.rerun()
                             else:
