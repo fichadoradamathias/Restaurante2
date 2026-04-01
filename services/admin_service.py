@@ -67,8 +67,7 @@ def delete_menu_item(db: Session, item_id: int):
 
 # --- GESTIÓN DE SEMANAS Y LOGICA DE TIEMPO ---
 def create_week(db: Session, title: str, start_date, end_datetime):
-    if isinstance(end_datetime, str): 
-        pass 
+    if isinstance(end_datetime, str): pass 
     new_week = Week(title=title, start_date=start_date, end_date=end_datetime)
     db.add(new_week)
     db.commit()
@@ -95,7 +94,7 @@ def check_and_auto_close_weeks(db: Session):
         count += 1
     return count
 
-# --- NUEVA LÓGICA DE CIERRE (CORREGIDA) ---
+# --- LOGICA DE CIERRE ---
 def finalize_week_logic(db: Session, week_id: int):
     week = db.query(Week).filter(Week.id == week_id).first()
     if not week or not week.is_open: return None, "Error o ya cerrada."
@@ -131,20 +130,18 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
     english_to_spanish = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
     
+    # 1. ELIMINAMOS LA COLUMNA DE NOTAS DE AQUÍ
     final_cols = ["Usuario", "Oficina"]
     for d_key in day_keys:
         d_name = english_to_spanish[d_key]
         final_cols.append(d_name)
-        final_cols.append(f"Nota {d_name}")
 
     menu_item_cache = {}
     
     def get_desc(item_id):
         if item_id is None: return None
-        try:
-            val_id = int(item_id)
-        except:
-            return "ID Inválido"
+        try: val_id = int(item_id)
+        except: return "ID Inválido"
 
         if val_id not in menu_item_cache:
             mi = db.query(MenuItem).filter(MenuItem.id == val_id).first()
@@ -168,20 +165,20 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
             
             if day in closed_days_list:
                 row[d_es] = "FERIADO"
-                row[f"Nota {d_es}"] = ""
                 continue
                 
             day_order = details.get(day, {})
             tipo = day_order.get("tipo", "nada")
-            nota = day_order.get("note", "")
             
             texto_pedido = "NO PEDIDO"
             
-            if tipo == "completo":
+            # Condicional blindada para que salga "NO PEDIDO"
+            if order.status == "no_pedido" or tipo == "nada":
+                texto_pedido = "NO PEDIDO"
+            elif tipo == "completo":
                 comp_id = day_order.get("plato_id")
                 desc = get_desc(comp_id)
                 if desc: texto_pedido = f"COMPLETO: {desc}"
-                
             elif tipo == "combinado":
                 prot_id = day_order.get("proteina_id")
                 guar_id = day_order.get("guarnicion_id")
@@ -197,7 +194,6 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
                     texto_pedido = " + ".join(partes)
             
             row[d_es] = texto_pedido
-            row[f"Nota {d_es}"] = nota
             
         data.append(row)
 
@@ -209,16 +205,3 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     df.to_excel(path, index=False) 
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
-
-# --- HELPERS (Legacy/User Panel) ---
-def check_existing_order(db: Session, user_id: int, week_id: int):
-    existing_order = db.query(Order).filter(Order.user_id == user_id, Order.week_id == week_id, Order.status != 'no_pedido').first()
-    return existing_order is not None
-
-def get_menu_options_for_week(db: Session, week_id: int):
-    menu_items = db.query(MenuItem).filter(MenuItem.week_id == week_id).order_by(MenuItem.day, MenuItem.type, MenuItem.option_number).all()
-    menu = {"Lunes": {"principal": [], "side": [], "salad": []}, "Martes": {"principal": [], "side": [], "salad": []}, "Miércoles": {"principal": [], "side": [], "salad": []}, "Jueves": {"principal": [], "side": [], "salad": []}, "Viernes": {"principal": [], "side": [], "salad": []}}
-    for item in menu_items:
-        if item.day in menu and item.type in menu[item.day]:
-            menu[item.day][item.type].append((item.id, item.description, item.option_number))
-    return menu
