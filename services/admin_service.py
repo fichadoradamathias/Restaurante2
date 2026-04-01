@@ -130,7 +130,6 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     day_keys = ["monday", "tuesday", "wednesday", "thursday", "friday"] 
     english_to_spanish = {"monday": "Lunes", "tuesday": "Martes", "wednesday": "Miércoles", "thursday": "Jueves", "friday": "Viernes"}
     
-    # 1. ELIMINAMOS LA COLUMNA DE NOTAS DE AQUÍ
     final_cols = ["Usuario", "Oficina"]
     for d_key in day_keys:
         d_name = english_to_spanish[d_key]
@@ -172,13 +171,13 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
             
             texto_pedido = "NO PEDIDO"
             
-            # Condicional blindada para que salga "NO PEDIDO"
             if order.status == "no_pedido" or tipo == "nada":
                 texto_pedido = "NO PEDIDO"
             elif tipo == "completo":
                 comp_id = day_order.get("plato_id")
                 desc = get_desc(comp_id)
-                if desc: texto_pedido = f"COMPLETO: {desc}"
+                # AQUÍ ESTÁ EL CAMBIO: Ya no dice "COMPLETO: ", solo pone la descripción
+                if desc: texto_pedido = desc 
             elif tipo == "combinado":
                 prot_id = day_order.get("proteina_id")
                 guar_id = day_order.get("guarnicion_id")
