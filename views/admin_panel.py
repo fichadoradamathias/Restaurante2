@@ -4,13 +4,14 @@ from database.models import Week, MenuItem, Office
 from services.admin_service import (
     create_week, finalize_week_logic, update_menu_item, delete_menu_item, 
     export_week_to_excel, get_all_offices, create_office, delete_office,
-    update_week_closed_days, create_menu_item 
+    update_week_closed_days, create_menu_item, reopen_week_logic 
 )
 from services.logic import delete_week_data 
 from sqlalchemy.orm import Session
 from datetime import datetime, time, timedelta
 import pandas as pd
 import os
+import time as time_module # Para el pequeño delay antes de recargar
 
 def admin_dashboard(db_session_maker):
     st.title("📋 Gestión Semanal y Oficinas")
@@ -95,13 +96,13 @@ def admin_dashboard(db_session_maker):
             
             st.divider()
 
-            # 2. ZONA DE CARGA DE PLATOS (NUEVAS CATEGORÍAS)
+            # 2. ZONA DE CARGA DE PLATOS
             st.markdown("### 🍽️ 2. Cargar Platos al Menú")
             
             with st.form("add_item_form"):
                 c1, c2 = st.columns(2)
                 
-                day_options = {d[1]: d[0] for d in days_map} # {'Lunes': 'monday', ...}
+                day_options = {d[1]: d[0] for d in days_map}
                 
                 sel_day_label = c1.selectbox("Día", list(day_options.keys()))
                 sel_day_code = day_options[sel_day_label]
@@ -109,10 +110,7 @@ def admin_dashboard(db_session_maker):
                 if sel_day_code in new_closed_days:
                     st.warning(f"⚠️ Atención: Estás cargando comida para el {sel_day_label}, pero está marcado como FERIADO.")
 
-                # ---> EL CAMBIO CLAVE ESTÁ AQUÍ <---
-                # Aseguramos que el administrador solo pueda elegir estas 3 opciones exactas.
                 sel_type_label = c2.selectbox("Tipo de Plato", ["Proteína", "Guarnición", "Plato Completo"])
-                # Mantenemos el nombre igual para la base de datos para no confundir.
                 sel_type_code = sel_type_label 
                 
                 c3, c4 = st.columns([1, 3])
@@ -121,7 +119,6 @@ def admin_dashboard(db_session_maker):
                 
                 if st.form_submit_button("➕ Agregar Plato"):
                     if desc:
-                        # Guardamos en la BD usando el nombre exacto de la categoría (Ej: "Proteína")
                         ok, msg = create_menu_item(db, sel_week_id, sel_day_code, sel_type_code, opt_num, desc)
                         if ok: st.success(msg); st.rerun()
                         else: st.error(msg)
@@ -139,7 +136,6 @@ def admin_dashboard(db_session_maker):
                     d_es = next((d[1] for d in days_map if d[0] == item.day), item.day)
                     
                     col_txt, col_del = st.columns([4, 1])
-                    # Ya no traducimos el tipo, mostramos el valor directo ("Proteína", etc)
                     col_txt.text(f"[{d_es}] {item.type} #{item.option_number}: {item.description}")
                     
                     if col_del.button("❌", key=f"del_item_{item.id}"):
@@ -216,12 +212,25 @@ def admin_dashboard(db_session_maker):
                 if path:
                     with open(path, "rb") as f: st.download_button("⬇️ Descargar Consolidado", f, file_name=path.split("/")[-1])
             
+            # --- ZONA DE CIERRE Y REAPERTURA ---
             w_obj = db.query(Week).filter(Week.id == sel_week_ex_id).first()
-            if w_obj and w_obj.is_open:
+            if w_obj:
                 st.markdown("---")
-                st.error("🚫 Zona de Cierre Manual")
-                if st.button("🔒 CERRAR SEMANA AHORA"):
-                    path, msg = finalize_week_logic(db, sel_week_ex_id)
-                    st.success("Semana cerrada."); st.rerun()
+                if w_obj.is_open:
+                    st.error("🚫 Zona de Cierre Manual")
+                    if st.button("🔒 CERRAR SEMANA AHORA"):
+                        path, msg = finalize_week_logic(db, sel_week_ex_id)
+                        st.success("Semana cerrada."); st.rerun()
+                else:
+                    st.success("🔓 Zona de Reapertura")
+                    st.info("Si reabres la semana, los usuarios podrán volver a hacer pedidos o editar los que ya tenían.")
+                    if st.button("🔓 REABRIR SEMANA AHORA", type="primary"):
+                        success, msg = reopen_week_logic(db, sel_week_ex_id)
+                        if success:
+                            st.success(msg)
+                            time_module.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(msg)
     
     db.close()

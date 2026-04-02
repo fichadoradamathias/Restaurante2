@@ -204,3 +204,19 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
     df.to_excel(path, index=False) 
     log = ExportLog(week_id=week_id, filename=path); db.add(log); db.commit()
     return path, "Exportación exitosa"
+
+def reopen_week_logic(db: Session, week_id: int):
+    """Cambia el estado de una semana de Cerrada a Abierta."""
+    week = db.query(Week).filter(Week.id == week_id).first()
+    if not week:
+        return False, "Semana no encontrada."
+    if week.is_open:
+        return False, "La semana ya está abierta."
+    
+    try:
+        week.is_open = True
+        db.commit()
+        return True, "Semana reabierta exitosamente."
+    except Exception as e:
+        db.rollback()
+        return False, f"Error al reabrir: {e}"
