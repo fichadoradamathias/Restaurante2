@@ -176,7 +176,6 @@ def export_week_to_excel(db: Session, week_id: int, office_id: int = None):
             elif tipo == "completo":
                 comp_id = day_order.get("plato_id")
                 desc = get_desc(comp_id)
-                # AQUÍ ESTÁ EL CAMBIO: Ya no dice "COMPLETO: ", solo pone la descripción
                 if desc: texto_pedido = desc 
             elif tipo == "combinado":
                 prot_id = day_order.get("proteina_id")
@@ -221,28 +220,23 @@ def reopen_week_logic(db: Session, week_id: int):
         db.rollback()
         return False, f"Error al reabrir: {e}"
 
-# --- NUEVA FUNCIÓN: CLONAR SEMANA ANTERIOR ---
-def clone_previous_week_menu(db: Session, current_week_id: int):
-    """Copia todos los platos de la semana cronológicamente anterior a la actual."""
-    current_week = db.query(Week).filter(Week.id == current_week_id).first()
-    if not current_week:
-        return False, "Semana actual no encontrada."
+# --- FUNCIÓN ACTUALIZADA: CLONAR DESDE UNA SEMANA ESPECÍFICA ---
+def clone_menu_from_week(db: Session, source_week_id: int, target_week_id: int):
+    """Copia todos los platos de una semana elegida a la semana actual."""
+    if source_week_id == target_week_id:
+        return False, "⚠️ La semana de origen y destino no pueden ser la misma."
 
-    # Busca la semana inmediatamente anterior basada en la fecha de inicio
-    previous_week = db.query(Week).filter(
-        Week.start_date < current_week.start_date
-    ).order_by(Week.start_date.desc()).first()
+    source_week = db.query(Week).filter(Week.id == source_week_id).first()
+    if not source_week:
+        return False, "Semana de origen no encontrada."
 
-    if not previous_week:
-        return False, "No hay semanas anteriores registradas en el sistema."
-
-    # Verifica que la semana anterior tenga platos
-    source_items = db.query(MenuItem).filter(MenuItem.week_id == previous_week.id).all()
+    # Verifica que la semana origen tenga platos
+    source_items = db.query(MenuItem).filter(MenuItem.week_id == source_week_id).all()
     if not source_items:
-        return False, f"La semana anterior ({previous_week.title}) no tiene platos cargados para copiar."
+        return False, f"La semana '{source_week.title}' no tiene platos cargados para copiar."
 
-    # Verifica que la semana actual esté VACÍA para no duplicar platos
-    existing_items = db.query(MenuItem).filter(MenuItem.week_id == current_week_id).count()
+    # Verifica que la semana actual esté VACÍA para evitar duplicados
+    existing_items = db.query(MenuItem).filter(MenuItem.week_id == target_week_id).count()
     if existing_items > 0:
         return False, "⚠️ La semana actual ya tiene platos. Bórralos primero antes de clonar."
 
@@ -250,7 +244,7 @@ def clone_previous_week_menu(db: Session, current_week_id: int):
     try:
         for item in source_items:
             new_item = MenuItem(
-                week_id=current_week_id,
+                week_id=target_week_id,
                 day=item.day,
                 type=item.type,
                 option_number=item.option_number,
@@ -258,7 +252,7 @@ def clone_previous_week_menu(db: Session, current_week_id: int):
             )
             db.add(new_item)
         db.commit()
-        return True, f"✅ Se copiaron {len(source_items)} platos de la semana '{previous_week.title}' con éxito."
+        return True, f"✅ Se copiaron {len(source_items)} platos desde '{source_week.title}' con éxito."
     except Exception as e:
         db.rollback()
         return False, f"Error al clonar: {e}"
