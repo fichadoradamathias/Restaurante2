@@ -4,7 +4,8 @@ from database.models import Week, MenuItem, Office
 from services.admin_service import (
     create_week, finalize_week_logic, update_menu_item, delete_menu_item, 
     export_week_to_excel, get_all_offices, create_office, delete_office,
-    update_week_closed_days, create_menu_item, reopen_week_logic 
+    update_week_closed_days, create_menu_item, reopen_week_logic,
+    clone_previous_week_menu  # <-- AQUÍ ESTÁ LA NUEVA FUNCIÓN IMPORTADA
 )
 from services.logic import delete_week_data 
 from sqlalchemy.orm import Session
@@ -98,6 +99,19 @@ def admin_dashboard(db_session_maker):
 
             # 2. ZONA DE CARGA DE PLATOS
             st.markdown("### 🍽️ 2. Cargar Platos al Menú")
+            
+            # --- NUEVO BOTÓN DE CLONADO RÁPIDO ---
+            with st.expander("⚡ Acción Rápida: Clonar Menú Anterior", expanded=False):
+                st.info("Esto copiará todos los platos de la última semana registrada a esta nueva semana. Útil si el menú es idéntico.")
+                if st.button("🔄 Clonar Menú de la Semana Pasada", use_container_width=True):
+                    ok, msg = clone_previous_week_menu(db, sel_week_id)
+                    if ok:
+                        st.success(msg)
+                        time_module.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            # -------------------------------------
             
             with st.form("add_item_form"):
                 c1, c2 = st.columns(2)

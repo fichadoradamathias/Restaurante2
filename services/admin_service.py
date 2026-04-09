@@ -220,3 +220,45 @@ def reopen_week_logic(db: Session, week_id: int):
     except Exception as e:
         db.rollback()
         return False, f"Error al reabrir: {e}"
+
+# --- NUEVA FUNCIÓN: CLONAR SEMANA ANTERIOR ---
+def clone_previous_week_menu(db: Session, current_week_id: int):
+    """Copia todos los platos de la semana cronológicamente anterior a la actual."""
+    current_week = db.query(Week).filter(Week.id == current_week_id).first()
+    if not current_week:
+        return False, "Semana actual no encontrada."
+
+    # Busca la semana inmediatamente anterior basada en la fecha de inicio
+    previous_week = db.query(Week).filter(
+        Week.start_date < current_week.start_date
+    ).order_by(Week.start_date.desc()).first()
+
+    if not previous_week:
+        return False, "No hay semanas anteriores registradas en el sistema."
+
+    # Verifica que la semana anterior tenga platos
+    source_items = db.query(MenuItem).filter(MenuItem.week_id == previous_week.id).all()
+    if not source_items:
+        return False, f"La semana anterior ({previous_week.title}) no tiene platos cargados para copiar."
+
+    # Verifica que la semana actual esté VACÍA para no duplicar platos
+    existing_items = db.query(MenuItem).filter(MenuItem.week_id == current_week_id).count()
+    if existing_items > 0:
+        return False, "⚠️ La semana actual ya tiene platos. Bórralos primero antes de clonar."
+
+    # Realiza la copia
+    try:
+        for item in source_items:
+            new_item = MenuItem(
+                week_id=current_week_id,
+                day=item.day,
+                type=item.type,
+                option_number=item.option_number,
+                description=item.description
+            )
+            db.add(new_item)
+        db.commit()
+        return True, f"✅ Se copiaron {len(source_items)} platos de la semana '{previous_week.title}' con éxito."
+    except Exception as e:
+        db.rollback()
+        return False, f"Error al clonar: {e}"
