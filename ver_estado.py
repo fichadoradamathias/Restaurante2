@@ -17,4 +17,4 @@ with engine.connect() as conn:
         else:
             print("❌ EL HASH ESTÁ ROTO (es texto plano). Hay que arreglarlo con el script de rescate.")
     else:
-        print("❓ El usuario no existe en Neon.")
+        print("❓ El usuario no existe en Neon.")python ver_estado.py
