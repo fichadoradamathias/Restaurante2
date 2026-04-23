@@ -6,24 +6,23 @@ from sqlalchemy.orm import sessionmaker
 # 1. Definir la URL de la base de datos de forma segura
 DATABASE_URL = ""
 
-# Intentamos leer los secretos de manera defensiva
+# Intentamos leer los secretos con tu estructura original
 try:
-    # Buscamos la variable de entorno estándar de Neon
-    if "NEON_DATABASE_URL" in st.secrets:
-        DATABASE_URL = st.secrets["NEON_DATABASE_URL"]
+    # Verificamos TU estructura exacta de secretos en Streamlit Cloud
+    if "connections" in st.secrets and "database_url" in st.secrets.connections:
+        DATABASE_URL = st.secrets.connections.database_url
         
-        # Corrección de protocolo para SQLAlchemy
+        # Correcciones vitales para Neon
         if DATABASE_URL.startswith("postgres://"):
             DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
             
-        # Requisito obligatorio para Neon (SSL)
         if "sslmode" not in DATABASE_URL:
             separator = "&" if "?" in DATABASE_URL else "?"
             DATABASE_URL += f"{separator}sslmode=require"
             
         print("✅ Conectado a PostgreSQL (Nube/Neon).")
     else:
-        raise ValueError("No se encontró NEON_DATABASE_URL.")
+        raise ValueError("No se encontraron secretos de conexión [connections].")
 except Exception as e:
     # BLOQUE FALLBACK: Si falla lo anterior, usamos SQLite local
     DATA_DIR = "data"
@@ -36,13 +35,11 @@ except Exception as e:
 
 # 2. Configurar el motor
 if "sqlite" in DATABASE_URL:
-    # Configuración específica para SQLite
     engine = create_engine(
         DATABASE_URL,
         connect_args={"check_same_thread": False}
     )
 else:
-    # Configuración para PostgreSQL (Neon)
     engine = create_engine(
         DATABASE_URL, 
         pool_pre_ping=True
